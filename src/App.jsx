@@ -745,6 +745,18 @@ function App() {
     document.body.style.removeProperty('user-select');
   }, []);
 
+  // Capture editor selection on every mouseup, even when the mouse is released
+  // outside the editor container (e.g. dragging from right to left across the
+  // panel boundary). Without this, saveEditorSelection() never fires for
+  // out-of-bounds releases and formatting operations silently fail.
+  useEffect(() => {
+    function handleGlobalMouseUp() {
+      saveEditorSelection();
+    }
+    document.addEventListener('mouseup', handleGlobalMouseUp);
+    return () => document.removeEventListener('mouseup', handleGlobalMouseUp);
+  }, []);
+
   // Emergency flush: save latest data to localStorage before the tab closes.
   // IndexedDB writes are async and may not complete in time, so we also
   // sync to localStorage synchronously on beforeunload as a safety net.
