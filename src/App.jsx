@@ -614,6 +614,7 @@ function App() {
   const [mentionSelectedIds, setMentionSelectedIds] = useState([]);
   const [mentionWorkflowTitle, setMentionWorkflowTitle] = useState('');
   const [mentionSourceHtml, setMentionSourceHtml] = useState('');
+  const [contextMenu, setContextMenu] = useState(null);
   const [activeEditorTextColor, setActiveEditorTextColor] = useState(DEFAULT_EDITOR_TEXT_COLOR);
   const [activeEditorBackgroundColor, setActiveEditorBackgroundColor] = useState(DEFAULT_EDITOR_BACKGROUND_COLOR);
   const [editorHydrationVersion, setEditorHydrationVersion] = useState(0);
@@ -682,7 +683,7 @@ function App() {
   const canEditEditor = Boolean(selectedCustomer) && (!isMergedWorkflowView || mergedWorkflows.length > 0);
   const editorWordCount = useMemo(() => getTextLengthFromHtml(editorContent), [editorContent]);
   const selectedCustomerTitle = selectedCustomer
-    ? [selectedCustomer.company || '未命名用户', selectedCustomer.contact, selectedCustomer.country].filter(Boolean).join(' · ')
+    ? (selectedCustomer.displayTitle || [selectedCustomer.company || '未命名用户', selectedCustomer.contact, selectedCustomer.country].filter(Boolean).join(' · '))
     : '未命名用户';
 
   const filteredCustomers = useMemo(() => {
@@ -1294,6 +1295,22 @@ function App() {
     setMentionSelectedIds([]);
     setMentionWorkflowTitle('');
     setMentionOpen(true);
+  }
+
+  function handleEditorContextMenu(event) {
+    event.preventDefault();
+    // Only show the context menu if there's selected text in the editor (or the editor has focus)
+    const range = editorSelectionRef.current;
+    const hasSelection = range && !range.collapsed && editorRef.current?.contains(range.commonAncestorContainer);
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      hasSelection,
+    });
+  }
+
+  function closeContextMenu() {
+    setContextMenu(null);
   }
 
   function confirmMentionDistribute() {
@@ -2067,6 +2084,22 @@ function App() {
     clearNestedEditorStyles(styledSpan, Object.keys(style));
     applyStyleToNestedEditorElements(styledSpan, style);
     range.insertNode(styledSpan);
+
+    // Unwrap redundant ancestor spans that became empty after extractContents().
+    // Without this, a leftover <span style="font-size:22px"> around a newly
+    // restyled <span style="font-size:12px"> would keep the line box tall.
+    let ancestor = styledSpan.parentElement;
+    while (ancestor && ancestor.tagName === 'SPAN' && editorRef.current?.contains(ancestor)) {
+      const ancestorText = (ancestor.textContent || '').replace(/ /g, ' ').trim();
+      const styledText = (styledSpan.textContent || '').replace(/ /g, ' ').trim();
+      if (ancestorText === styledText) {
+        ancestor.replaceWith(styledSpan);
+        ancestor = styledSpan.parentElement;
+      } else {
+        break;
+      }
+    }
+
     selection.removeAllRanges();
     const nextRange = document.createRange();
     nextRange.selectNodeContents(styledSpan);
@@ -3015,6 +3048,12 @@ function App() {
           <PanelTitle
             title={selectedCustomerTitle}
             icon={<MessageSquareText size={18} />}
+            editable
+            onTitleChange={(newTitle) => {
+              if (selectedCustomer) {
+                updateCustomer(selectedCustomer.id, { displayTitle: newTitle });
+              }
+            }}
             action={(
               <div className="panelHeaderActions">
                 <button
@@ -3137,6 +3176,7 @@ function App() {
                   onKeyDown={handleEditorKeyDown}
                   onKeyUp={saveEditorSelection}
                   onFocus={saveEditorSelection}
+                  onContextMenu={handleEditorContextMenu}
                   onClick={handleEditorClick}
                   onDoubleClick={handleEditorDoubleClick}
                   onWheel={handleEditorWheel}
@@ -3155,18 +3195,12 @@ function App() {
                   className="composerTitle"
                   value={noteTitleDraft}
                   onChange={(event) => {
-                    const nextValue = event.target.value;
-                    if (nextValue.endsWith('@') && nextValue.length > (noteTitleDraft?.length ?? 0)) {
-                      openMentionPopup();
-                      setNoteTitleDraft(nextValue.slice(0, -1));
-                      return;
-                    }
-                    setNoteTitleDraft(nextValue);
+                    setNoteTitleDraft(event.target.value);
                   }}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') addMessyNote();
                   }}
-                  placeholder="输入标题或用户名称，输入@分发到多个客户"
+                  placeholder="输入标题或用户名称，选中内容后右键分发到多个客户"
                 />
                 <div className="composerActions">
                   <button type="button" className="composerIconButton" onClick={addMessyNote}>
@@ -3551,16 +3585,82 @@ function App() {
           </div>
         </div>
       )}
+      {contextMenu && (
+        <div className="contextMenuOverlay" onClick={closeContextMenu} onContextMenu={(event) => { event.preventDefault(); closeContextMenu(); }}>
+          <div
+            className="contextMenuPanel"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <button
+              className="contextMenuItem"
+              onClick={() => {
+                closeContextMenu();
+                saveEditorSelection();
+                openMentionPopup();
+              }}
+            >
+              <Send size={15} />
+              分发到其他客户
+            </button>
+            {!contextMenu.hasSelection && (
+              <div className="contextMenuHint">未选中文本，将仅创建空工作流</div>
+            )}
+          </div>
+        </div>
+      )}
     </main>
   );
 }
 
-function PanelTitle({ title, icon, meta, action, collapsed = false, onToggle, toggleIcon, toggleTitle }) {
+function PanelTitle({ title, icon, meta, action, collapsed = false, onToggle, toggleIcon, toggleTitle, editable = false, onTitleChange }) {
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(title);
+
+  useEffect(() => {
+    setTitleDraft(title);
+  }, [title]);
+
+  function commitTitleChange() {
+    const trimmed = titleDraft.trim();
+    if (trimmed && trimmed !== title) {
+      onTitleChange?.(trimmed);
+    } else {
+      setTitleDraft(title);
+    }
+    setEditingTitle(false);
+  }
+
+  function cancelTitleEdit() {
+    setTitleDraft(title);
+    setEditingTitle(false);
+  }
+
   return (
     <div className="panelTitle">
       <div>
         {icon}
-        {!collapsed && <h2>{title}</h2>}
+        {!collapsed && (editingTitle ? (
+          <input
+            className="panelTitleInput"
+            value={titleDraft}
+            onChange={(event) => setTitleDraft(event.target.value)}
+            onBlur={commitTitleChange}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') commitTitleChange();
+              if (event.key === 'Escape') cancelTitleEdit();
+            }}
+            autoFocus
+          />
+        ) : (
+          <h2
+            onClick={editable ? () => { setTitleDraft(title); setEditingTitle(true); } : undefined}
+            style={editable ? { cursor: 'pointer' } : undefined}
+            title={editable ? '点击修改标题' : undefined}
+          >
+            {title}
+          </h2>
+        ))}
       </div>
       {!collapsed && <span>{meta}</span>}
       {!collapsed && action}
