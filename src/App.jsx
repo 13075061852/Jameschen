@@ -607,6 +607,7 @@ function App() {
   const [pendingDelete, setPendingDelete] = useState(null);
   const [pendingImport, setPendingImport] = useState(null);
   const [attachmentPreview, setAttachmentPreview] = useState(null);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [activeEditorTextColor, setActiveEditorTextColor] = useState(DEFAULT_EDITOR_TEXT_COLOR);
   const [activeEditorBackgroundColor, setActiveEditorBackgroundColor] = useState(DEFAULT_EDITOR_BACKGROUND_COLOR);
   const [editorHydrationVersion, setEditorHydrationVersion] = useState(0);
@@ -1338,6 +1339,264 @@ function App() {
     } else {
       changeWorkflowViewMode('merged');
     }
+  }
+
+  function stripEditorFramesForExport(html) {
+    // Create a temp container to process editor-specific wrappers
+    if (typeof document === 'undefined') return html;
+    const container = document.createElement('div');
+    container.innerHTML = toEditorHtml(html);
+
+    // Unwrap image frames — keep just the <img>, copy sizing from frame
+    container.querySelectorAll('.editorImageFrame').forEach((frame) => {
+      const img = frame.querySelector('img');
+      if (img) {
+        const frameWidth = frame.style?.width;
+        if (frameWidth && !img.getAttribute('width')) {
+          img.setAttribute('width', parseInt(frameWidth, 10) || 320);
+        }
+        img.style.maxWidth = '100%';
+        img.style.height = 'auto';
+        img.style.display = 'block';
+        img.style.margin = '8px 0';
+        img.style.borderRadius = '6px';
+        frame.replaceWith(img);
+      } else {
+        frame.remove();
+      }
+    });
+
+    // Remove attachment frames entirely
+    container.querySelectorAll('.editorAttachmentFrame').forEach((frame) => frame.remove());
+
+    // Remove resize handles
+    container.querySelectorAll('.editorImageResizeHandle').forEach((el) => el.remove());
+
+    // Remove blank lines: empty paragraphs, whitespace-only nodes, stray <br>
+    const isEmptyBlock = (el) => {
+      if (!el) return true;
+      // Keep elements that contain images or attachments
+      if (el.querySelector('img')) return false;
+      const text = (el.textContent ?? '').replace(/ /g, ' ').trim();
+      // Keep if it has any meaningful text
+      if (text) return false;
+      // Remove if only has <br> or is empty
+      return true;
+    };
+
+    // Remove empty <p> and <div> blocks (iterate backwards since we mutate)
+    const blocks = container.querySelectorAll('p, div');
+    for (let i = blocks.length - 1; i >= 0; i -= 1) {
+      if (isEmptyBlock(blocks[i])) {
+        blocks[i].remove();
+      }
+    }
+
+    // Remove orphan <br> at the very beginning or end
+    const firstChild = container.firstChild;
+    if (firstChild?.nodeName === 'BR') firstChild.remove();
+    const lastChild = container.lastChild;
+    if (lastChild?.nodeName === 'BR') lastChild.remove();
+
+    // Collapse consecutive <br> tags into one
+    container.querySelectorAll('br + br').forEach((br) => br.remove());
+
+    return container.innerHTML;
+  }
+
+  function buildExportHtml(workflows, customerName) {
+    const title = customerName || '未命名客户';
+    const date = new Date().toLocaleString('zh-CN', { hour12: false });
+    const sections = workflows.map((item) => {
+      const content = stripEditorFramesForExport(item.documentContent ?? item.content ?? '');
+      const statusText = item.status ?? '';
+      return [
+        '<section style="margin-bottom:24px;page-break-inside:avoid;">',
+        `<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #e5e5e5;">`,
+        `<span style="color:#666;font-size:13px;">${escapeHtml(item.date ?? '')}</span>`,
+        `<span style="font-weight:700;font-size:15px;">${escapeHtml(item.title ?? item.content ?? '沟通记录')}</span>`,
+        statusText ? `<span style="display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:700;color:#087678;border:1px solid rgba(12,139,141,0.44);background:#f0faf9;">${escapeHtml(statusText)}</span>` : '',
+        '</div>',
+        `<div style="color:#2d3741;line-height:1.7;font-size:14px;white-space:pre-wrap;word-break:break-word;">${content}</div>`,
+        '</section>',
+      ].join('');
+    }).join('');
+
+    return [
+      '<!DOCTYPE html>',
+      '<html lang="zh-CN">',
+      '<head><meta charset="UTF-8">',
+      `<title>${escapeHtml(title)} - 工作流合并导出</title>`,
+      '<style>',
+      'body{max-width:800px;margin:0 auto;padding:40px 32px;font-family:"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;color:#111;background:#fff;}',
+      'h1{margin:0 0 8px;font-size:22px;}',
+      'h1+p{color:#666;font-size:13px;margin:0 0 28px;}',
+      'img{max-width:100%;height:auto;border-radius:6px;}',
+      '@media print{body{padding:20px 0;}}',
+      '</style>',
+      '</head>',
+      '<body>',
+      `<h1>${escapeHtml(title)}</h1>`,
+      `<p>导出时间：${date} ｜ 共 ${workflows.length} 条工作流</p>`,
+      sections,
+      '</body>',
+      '</html>',
+    ].join('');
+  }
+
+  async function handleExportPDF() {
+    const customerTimeline = selectedCustomer?.timeline ?? [];
+    const merged = customerTimeline.filter((item) => selectedWorkflowIds.includes(item.id));
+    if (merged.length === 0) return;
+    setExportDialogOpen(false);
+
+    const html = buildExportHtml(merged, selectedCustomerTitle);
+
+    // Render full HTML in a hidden iframe so <style> is applied properly
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.left = '0';
+    iframe.style.top = '0';
+    iframe.style.width = '794px';  // A4 @ 96dpi ≈ 794px
+    iframe.style.zIndex = '-1';
+    iframe.style.opacity = '0';
+    iframe.style.pointerEvents = 'none';
+    document.body.appendChild(iframe);
+
+    const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+    iframeDoc.open();
+    iframeDoc.write(html);
+    iframeDoc.close();
+
+    // Wait for full render
+    await new Promise((resolve) => {
+      iframe.onload = resolve;
+      if (iframeDoc.readyState === 'complete') resolve();
+    });
+    await new Promise((r) => setTimeout(r, 800));
+
+    const body = iframeDoc.body;
+    // Temporarily make iframe visible at correct dimensions for html2canvas
+    iframe.style.opacity = '1';
+    iframe.style.height = `${Math.max(body.scrollHeight + 80, 600)}px`;
+
+    try {
+      const html2canvas = (await import('html2canvas')).default;
+      const { jsPDF } = await import('jspdf');
+
+      // Capture the rendered body as a full-page canvas
+      const canvas = await html2canvas(body, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+        windowWidth: 794,
+        width: 794,
+        height: body.scrollHeight,
+      });
+
+      // Build PDF: A4 portrait, slice canvas across pages
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = 210;   // A4 width in mm
+      const pageHeight = 297;  // A4 height in mm
+      const margin = 10;       // mm
+      const contentWidth = pageWidth - margin * 2;
+      const imgWidth = contentWidth;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      const pageContentHeight = pageHeight - margin * 2;
+
+      let remainingHeight = imgHeight;
+      let sourceY = 0;
+
+      while (remainingHeight > 0) {
+        const sliceHeight = Math.min(remainingHeight, pageContentHeight);
+        const sourceHeight = (sliceHeight / imgHeight) * canvas.height;
+
+        // Create a slice canvas
+        const sliceCanvas = document.createElement('canvas');
+        sliceCanvas.width = canvas.width;
+        sliceCanvas.height = Math.ceil(sourceHeight);
+        const ctx = sliceCanvas.getContext('2d');
+        ctx.drawImage(canvas, 0, sourceY, canvas.width, sourceHeight, 0, 0, canvas.width, sourceHeight);
+
+        const sliceDataUrl = sliceCanvas.toDataURL('image/jpeg', 0.92);
+        pdf.addImage(sliceDataUrl, 'JPEG', margin, margin, imgWidth, sliceHeight);
+
+        sourceY += sourceHeight;
+        remainingHeight -= sliceHeight;
+
+        if (remainingHeight > 0) {
+          pdf.addPage();
+        }
+      }
+
+      const stamp = new Date().toISOString().slice(0, 10);
+      pdf.save(`${selectedCustomer?.company || '客户'}_工作流合并_${stamp}.pdf`);
+    } catch (error) {
+      console.error('PDF export failed', error);
+    } finally {
+      document.body.removeChild(iframe);
+    }
+  }
+
+  function handleExportWord() {
+    setExportDialogOpen(false);
+    const customerTimeline = selectedCustomer?.timeline ?? [];
+    const merged = customerTimeline.filter((item) => selectedWorkflowIds.includes(item.id));
+    if (merged.length === 0) return;
+
+    const title = selectedCustomerTitle || '未命名客户';
+    const date = new Date().toLocaleString('zh-CN', { hour12: false });
+
+    const sections = merged.map((item) => {
+      const content = stripEditorFramesForExport(item.documentContent ?? item.content ?? '');
+      const statusText = item.status ?? '';
+      return [
+        `<h2 style="font-size:14pt;color:#333;margin:18pt 0 6pt 0;border-bottom:1pt solid #ddd;padding-bottom:6pt;">${escapeHtml(item.title ?? item.content ?? '沟通记录')}</h2>`,
+        `<p style="color:#666;font-size:10pt;margin:0 0 10pt 0;">`,
+        `<span>${escapeHtml(item.date ?? '')}</span>`,
+        statusText ? ` &middot; <span style="color:#087678;">${escapeHtml(statusText)}</span>` : '',
+        '</p>',
+        `<div style="font-size:11pt;line-height:1.8;color:#222;">${content}</div>`,
+        merged.indexOf(item) < merged.length - 1 ? '<hr style="margin:18pt 0;border:0;border-top:1px dashed #ccc;" />' : '',
+      ].join('');
+    }).join('');
+
+    const wordDoc = [
+      '<html xmlns:o="urn:schemas-microsoft-com:office:office"',
+      '      xmlns:w="urn:schemas-microsoft-com:office:word"',
+      '      xmlns="http://www.w3.org/TR/REC-html40">',
+      '<head>',
+      '<meta charset="UTF-8">',
+      '<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">',
+      '<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument></xml><![endif]-->',
+      '<style>',
+      '@page { size: A4; margin: 2cm 2.5cm; }',
+      'body { font-family: "PingFang SC","Microsoft YaHei",sans-serif; color: #111; }',
+      'img { max-width: 100%; height: auto; }',
+      'table { border-collapse: collapse; width: 100%; }',
+      'td, th { border: 1px solid #ccc; padding: 4px 8px; }',
+      '</style>',
+      '</head>',
+      '<body>',
+      `<h1 style="font-size:18pt;color:#111;margin:0 0 4pt 0;">${escapeHtml(title)}</h1>`,
+      `<p style="color:#888;font-size:9pt;margin:0 0 20pt 0;">导出时间：${date} ｜ 共 ${merged.length} 条工作流</p>`,
+      sections,
+      '</body>',
+      '</html>',
+    ].join('\n');
+
+    const bom = '﻿';
+    const blob = new Blob([bom + wordDoc], { type: 'application/msword;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const stamp = new Date().toISOString().slice(0, 10);
+    link.href = url;
+    link.download = `${selectedCustomer?.company || '客户'}_工作流合并_${stamp}.doc`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
   }
 
   function toggleEditorExpanded() {
@@ -2534,6 +2793,7 @@ function App() {
               onSelect={selectSingleWorkflow}
               onMergeView={toggleMergeView}
               isMerged={isMergedWorkflowView}
+              onExport={() => setExportDialogOpen(true)}
             />
           ) : selectedCustomer ? (
             <div className="archiveScroll">
@@ -2742,6 +3002,30 @@ function App() {
           onConfirm={confirmPendingDelete}
         />
       )}
+      {exportDialogOpen && (
+        <div className="confirmOverlay" role="presentation" onMouseDown={() => setExportDialogOpen(false)}>
+          <div className="confirmDialog exportDialog" role="dialog" aria-modal="true" aria-labelledby="exportDialogTitle" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="confirmIcon exportDialogIcon">
+              <Download size={20} />
+            </div>
+            <div className="confirmContent">
+              <h3 id="exportDialogTitle">导出合并内容</h3>
+              <p>请选择导出格式</p>
+            </div>
+            <div className="confirmActions exportDialogActions">
+              <button className="confirmCancel" onClick={handleExportPDF}>
+                <FileText size={15} />
+                导出 PDF
+              </button>
+              <button className="confirmCancel" onClick={handleExportWord}>
+                <FileText size={15} />
+                导出 Word
+              </button>
+              <button className="confirmDanger" onClick={() => setExportDialogOpen(false)}>取消</button>
+            </div>
+          </div>
+        </div>
+      )}
       {pendingImport && (
         <ImportBackupDialog
           stats={pendingImport.stats}
@@ -2843,7 +3127,7 @@ function EditorSizePicker({ sizes, onPick }) {
   );
 }
 
-function CollapsedWorkflowRail({ workflows, selectedWorkflowId, onSelect, onMergeView, isMerged }) {
+function CollapsedWorkflowRail({ workflows, selectedWorkflowId, onSelect, onMergeView, isMerged, onExport }) {
   return (
     <div className="collapsedRail" title="最近工作流" aria-label="最近工作流">
       {workflows.length > 1 && onMergeView && (
@@ -2853,7 +3137,17 @@ function CollapsedWorkflowRail({ workflows, selectedWorkflowId, onSelect, onMerg
           title={isMerged ? '切换为单个查看' : '合并查看所有工作流'}
           aria-label={isMerged ? '切换为单个查看' : '合并查看所有工作流'}
         >
-          {isMerged ? '单项' : '合并'}
+          合并
+        </button>
+      )}
+      {isMerged && onExport && (
+        <button
+          className="collapsedExportButton"
+          onClick={onExport}
+          title="导出合并内容"
+          aria-label="导出合并内容"
+        >
+          导出
         </button>
       )}
       <div className="collapsedWorkflowList">
