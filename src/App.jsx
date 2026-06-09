@@ -64,7 +64,6 @@ const DEFAULT_EDITOR_TEXT_COLOR = EDITOR_TEXT_COLORS[0];
 const DEFAULT_EDITOR_BACKGROUND_COLOR = EDITOR_BACKGROUND_COLORS[5];
 const EDITOR_ATTACHMENT_ACCEPT = '.pdf,.doc,.docx,.xls,.xlsx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const EDITOR_IMAGE_MIN_WIDTH = 80;
-const EDITOR_IMAGE_WHEEL_STEP = 32;
 const DEFAULT_LEFT_PANEL_WIDTH = 360;
 const DEFAULT_RIGHT_PANEL_WIDTH = 540;
 const COLLAPSED_PANEL_WIDTH = 48;
@@ -2720,20 +2719,6 @@ function App() {
     document.addEventListener('visibilitychange', stopCustomImageDrag);
   }
 
-  function handleEditorWheel(event) {
-    const imageFrame = event.target.closest?.('.editorImageFrame');
-    if (!imageFrame || !editorRef.current?.contains(imageFrame)) return;
-
-    event.preventDefault();
-    clearActiveEditorImage();
-    imageFrame.classList.add('active');
-
-    const currentWidth = imageFrame.getBoundingClientRect().width;
-    const direction = event.deltaY < 0 ? 1 : -1;
-    setEditorImageWidth(imageFrame, currentWidth + direction * EDITOR_IMAGE_WHEEL_STEP);
-    syncEditorContent();
-  }
-
   const fontSizeTooltipThrottleRef = useRef(0);
 
   function handleEditorMouseMove(event) {
@@ -3265,7 +3250,6 @@ function App() {
                   onContextMenu={handleEditorContextMenu}
                   onClick={handleEditorClick}
                   onDoubleClick={handleEditorDoubleClick}
-                  onWheel={handleEditorWheel}
                   data-placeholder={isMergedWorkflowView
                     ? '请选择至少一个工作流进行合并查看。'
                     : selectedWorkflow
