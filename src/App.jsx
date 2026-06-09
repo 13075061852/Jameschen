@@ -1228,11 +1228,12 @@ function App() {
   function addCustomer() {
     const id = `c-${Date.now()}`;
     const today = new Date().toISOString().slice(0, 10);
+    const companyName = noteTitleDraft.trim() || '新客户';
     const nextCustomer = {
       id,
       serialNumber: String(customers.length + 1),
       pinned: false,
-      company: '新客户',
+      company: companyName,
       grade: 'C',
       country: '',
       website: '',
@@ -1256,6 +1257,7 @@ function App() {
     setSelectedWorkflowId('');
     setArchiveEditing(false);
     setArchiveDraft(null);
+    setNoteTitleDraft('');
   }
 
   function updateArchiveDraft(fieldKey, value) {
@@ -1897,13 +1899,13 @@ function App() {
   }
 
   function applyFormatPainterStyle(style) {
-    // Directly apply styles to current selection without the saveEditorSelection
-    // side-effect (avoids re-entrancy from format painter auto-apply)
+    // Use saved selection (set synchronously by saveEditorSelection), not
+    // window.getSelection() which can shift during the setTimeout deferral.
     if (!editorRef.current) return;
+    if (!restoreEditorSelection()) return;
     const selection = window.getSelection();
     if (!selection?.rangeCount) return;
     const range = selection.getRangeAt(0);
-    if (!editorRef.current.contains(range.commonAncestorContainer)) return;
     if (range.collapsed) return;
 
     const styledSpan = document.createElement('span');
@@ -1934,43 +1936,66 @@ function App() {
     if (!selection?.rangeCount || selection.isCollapsed) return;
 
     const range = selection.getRangeAt(0);
-    let node = range.commonAncestorContainer;
-    if (node.nodeType === Node.TEXT_NODE) node = node.parentElement;
 
-    // Walk up to find the nearest styled element
-    let el = node;
+    // Start from the element at the beginning of the selection
+    let startEl = range.startContainer;
+    if (startEl.nodeType === Node.TEXT_NODE) {
+      startEl = startEl.parentElement;
+    }
+
+    // Get computed styles of the exact element at selection start
+    const computed = window.getComputedStyle(startEl);
+    // Default editor styles for comparison
+    const defaults = editorRef.current ? window.getComputedStyle(editorRef.current) : null;
+
     const style = {};
-    while (el && el !== editorRef.current) {
-      const s = el.style || {};
-      const tag = el.tagName || '';
-      const computed = window.getComputedStyle(el);
 
-      // Bold
-      if (!style.fontWeight && (computed.fontWeight === 'bold' || Number(computed.fontWeight) >= 600 || tag === 'B' || tag === 'STRONG')) {
-        style.fontWeight = computed.fontWeight >= 700 ? 'bold' : computed.fontWeight;
-      }
-      // Italic
-      if (!style.fontStyle && (computed.fontStyle === 'italic' || tag === 'I' || tag === 'EM')) {
-        style.fontStyle = 'italic';
-      }
-      // Underline
-      if (!style.textDecoration && (computed.textDecorationLine.includes('underline') || tag === 'U')) {
+    // Font weight (bold) — capture only if not the default normal weight
+    const weight = computed.fontWeight;
+    if (weight && weight !== '400' && weight !== 'normal') {
+      style.fontWeight = weight;
+    }
+
+    // Font style (italic / oblique) — computed value OR custom editor italic
+    const isItalic = computed.fontStyle === 'italic'
+      || computed.fontStyle === 'oblique'
+      || startEl.closest('.editorItalic, i, em');
+    if (isItalic) {
+      style.fontStyle = 'italic';
+    }
+
+    // Text decoration (underline / line-through)
+    const deco = computed.textDecorationLine;
+    if (deco && deco !== 'none') {
+      if (deco.includes('underline')) {
         style.textDecoration = 'underline';
+      } else if (deco.includes('line-through')) {
+        style.textDecoration = 'line-through';
       }
-      // Color
-      if (!style.color && computed.color && computed.color !== 'rgb(17, 17, 17)' && computed.color !== 'rgb(34, 34, 34)') {
-        style.color = computed.color;
-      }
-      // Background
-      if (!style.backgroundColor && computed.backgroundColor && computed.backgroundColor !== 'rgba(0, 0, 0, 0)' && computed.backgroundColor !== 'transparent') {
-        style.backgroundColor = computed.backgroundColor;
-      }
-      // Font size
-      if (!style.fontSize && s.fontSize) {
-        style.fontSize = s.fontSize;
-      }
+    }
 
-      el = el.parentElement;
+    // Text color — compare against editor default color
+    const defaultColor = defaults?.color || 'rgb(17, 17, 17)';
+    if (computed.color && computed.color !== defaultColor) {
+      style.color = computed.color;
+    }
+
+    // Background color
+    const bg = computed.backgroundColor;
+    if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent' && bg !== (defaults?.backgroundColor || '')) {
+      style.backgroundColor = bg;
+    }
+
+    // Font size
+    const defaultFontSize = defaults?.fontSize || '14px';
+    if (computed.fontSize && computed.fontSize !== defaultFontSize) {
+      style.fontSize = computed.fontSize;
+    }
+
+    // Font family
+    const defaultFontFamily = defaults?.fontFamily || '';
+    if (computed.fontFamily && computed.fontFamily !== defaultFontFamily) {
+      style.fontFamily = computed.fontFamily;
     }
 
     if (Object.keys(style).length === 0) return;
@@ -2995,7 +3020,7 @@ function App() {
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') addMessyNote();
                   }}
-                  placeholder="输入标题"
+                  placeholder="输入标题或用户名称"
                 />
                 <div className="composerActions">
                   <button type="button" className="composerIconButton" onClick={addMessyNote}>
