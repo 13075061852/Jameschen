@@ -738,7 +738,7 @@ function App() {
   const [mentionWorkflowTitle, setMentionWorkflowTitle] = useState('');
   const [mentionSourceHtml, setMentionSourceHtml] = useState('');
   const [contextMenu, setContextMenu] = useState(null);
-  const [fontSizeTooltip, setFontSizeTooltip] = useState(null);
+  const [activeEditorFontSize, setActiveEditorFontSize] = useState('');
   const [activeEditorTextColor, setActiveEditorTextColor] = useState(DEFAULT_EDITOR_TEXT_COLOR);
   const [activeEditorBackgroundColor, setActiveEditorBackgroundColor] = useState(DEFAULT_EDITOR_BACKGROUND_COLOR);
   const [editorHydrationVersion, setEditorHydrationVersion] = useState(0);
@@ -2029,6 +2029,13 @@ function App() {
     const editor = editorRef.current;
     if (!editor.contains(range.commonAncestorContainer)) return;
     editorSelectionRef.current = range.cloneRange();
+    const element = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+      ? range.commonAncestorContainer
+      : range.commonAncestorContainer.parentElement;
+    const fontSize = element ? window.getComputedStyle(element).fontSize : '';
+    if (fontSize) {
+      setActiveEditorFontSize(fontSize);
+    }
 
     // Format painter: if active and new non-empty selection, apply & deactivate
     if (formatPainterRef.current && !range.collapsed) {
@@ -3040,38 +3047,25 @@ function App() {
     document.addEventListener('visibilitychange', stopCustomImageDrag);
   }
 
-  const fontSizeTooltipThrottleRef = useRef(0);
+  const fontSizeProbeThrottleRef = useRef(0);
 
   function handleEditorMouseMove(event) {
     const now = performance.now();
-    if (now - fontSizeTooltipThrottleRef.current < 120) return;
-    fontSizeTooltipThrottleRef.current = now;
+    if (now - fontSizeProbeThrottleRef.current < 120) return;
+    fontSizeProbeThrottleRef.current = now;
 
     const editor = editorRef.current;
     if (!editor) return;
 
     const el = document.elementFromPoint(event.clientX, event.clientY);
     if (!el || !editor.contains(el) || el.closest?.('.editorImageFrame, .editorAttachmentFrame')) {
-      setFontSizeTooltip(null);
       return;
     }
 
     const fontSize = window.getComputedStyle(el).fontSize;
-    if (!fontSize) {
-      setFontSizeTooltip(null);
-      return;
+    if (fontSize) {
+      setActiveEditorFontSize((current) => (current === fontSize ? current : fontSize));
     }
-
-    setFontSizeTooltip((prev) => {
-      if (prev && prev.fontSize === fontSize && prev.x === event.clientX && prev.y === event.clientY) {
-        return prev;
-      }
-      return { x: event.clientX, y: event.clientY, fontSize };
-    });
-  }
-
-  function handleEditorMouseLeave() {
-    setFontSizeTooltip(null);
   }
 
   function handleEditorMouseDown(event) {
@@ -3507,7 +3501,11 @@ function App() {
                   <span />
                   <EditorSizePicker
                     sizes={EDITOR_FONT_SIZES}
-                    onPick={(fontSize) => applyEditorStyle({ fontSize })}
+                    currentSize={activeEditorFontSize}
+                    onPick={(fontSize) => {
+                      setActiveEditorFontSize(fontSize);
+                      applyEditorStyle({ fontSize });
+                    }}
                   />
                   <EditorColorPicker
                     label="文字颜色"
@@ -3579,7 +3577,6 @@ function App() {
                   onMouseDown={handleEditorMouseDown}
                   onMouseUp={saveEditorSelection}
                   onMouseMove={handleEditorMouseMove}
-                  onMouseLeave={handleEditorMouseLeave}
                   onKeyDown={handleEditorKeyDown}
                   onKeyUp={saveEditorSelection}
                   onFocus={saveEditorSelection}
@@ -4017,14 +4014,6 @@ function App() {
           </div>
         </div>
       )}
-      {fontSizeTooltip && (
-        <div
-          className="fontSizeTooltip"
-          style={{ left: fontSizeTooltip.x + 12, top: fontSizeTooltip.y - 28 }}
-        >
-          {fontSizeTooltip.fontSize}
-        </div>
-      )}
     </main>
   );
 }
@@ -4119,7 +4108,7 @@ function EditorColorPicker({ label, trigger, colors, currentColor, swatchClassNa
   );
 }
 
-function EditorSizePicker({ sizes, onPick }) {
+function EditorSizePicker({ sizes, currentSize, onPick }) {
   return (
     <div className="toolbarSizePicker" title="设置字号">
       <button
@@ -4128,7 +4117,7 @@ function EditorSizePicker({ sizes, onPick }) {
         onMouseDown={(event) => event.preventDefault()}
         aria-label="设置字号"
       >
-        字号
+        <span>{currentSize || '字号'}</span>
         <ChevronDown size={10} />
       </button>
       <div className="toolbarSizePopover" role="menu" aria-label="设置字号">

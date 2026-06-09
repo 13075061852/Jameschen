@@ -1128,6 +1128,7 @@ button {
 
 .toolbarSizeTrigger {
   height: 24px;
+  min-width: 58px;
   padding: 0 7px;
   display: inline-flex;
   align-items: center;
@@ -1140,6 +1141,11 @@ button {
   font-size: 12px;
   font-weight: 760;
   outline: 0;
+}
+
+.toolbarSizeTrigger span {
+  min-width: 32px;
+  text-align: center;
 }
 
 .toolbarSizePopover {
@@ -1560,21 +1566,6 @@ button {
 .messyContent .editorImageFrame.active .editorImageResizeHandle {
   opacity: 1;
   pointer-events: auto;
-}
-
-.fontSizeTooltip {
-  position: fixed;
-  z-index: 1000;
-  padding: 2px 6px;
-  font-size: 11px;
-  line-height: 1.5;
-  color: #ffffff;
-  background: rgba(17, 17, 17, 0.82);
-  border-radius: 4px;
-  pointer-events: none;
-  white-space: nowrap;
-  font-family: system-ui, -apple-system, sans-serif;
-  backdrop-filter: blur(4px);
 }
 
 .messyContent .editorAttachmentFrame {
