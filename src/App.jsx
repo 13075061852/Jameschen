@@ -28,6 +28,7 @@ import {
   Eraser,
   Expand,
   FileText,
+  Highlighter,
   Image,
   Italic,
   Link,
@@ -43,6 +44,7 @@ import {
   Settings,
   Star,
   Trash2,
+  Type,
   Underline,
   Undo2,
   Upload,
@@ -52,6 +54,7 @@ import {
 const STORAGE_KEY = 'personal-workflow-manager-v1';
 const CUSTOMER_DB_NAME = 'personal-workflow-manager-db';
 const CUSTOMER_DB_STORE = 'records';
+const CUSTOMER_ASSET_STORE = 'assets';
 const LAYOUT_STORAGE_KEY = 'personal-workflow-manager-layout-v1';
 const VIEW_STATE_STORAGE_KEY = 'personal-workflow-manager-view-state-v1';
 const GLOBAL_FIELD_LABELS_STORAGE_KEY = 'personal-workflow-manager-global-field-labels-v1';
@@ -72,6 +75,11 @@ const MIN_LEFT_PANEL_WIDTH = 260;
 const MIN_RIGHT_PANEL_WIDTH = 360;
 const MIN_CENTER_PANEL_WIDTH = 360;
 const LOCAL_STORAGE_SAFE_CUSTOMER_SIZE = 1_500_000;
+const CUSTOMER_SAVE_DEBOUNCE_MS = 900;
+const INITIAL_CUSTOMER_RENDER_LIMIT = 80;
+const CUSTOMER_RENDER_INCREMENT = 80;
+const COLLAPSED_CUSTOMER_RENDER_LIMIT = 120;
+const STORED_ASSET_PREFIX = 'dbasset:';
 
 const gradeMap = {
   A: '非常优质',
@@ -267,10 +275,13 @@ function saveCustomers(customers) {
 
 function openCustomerDb() {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(CUSTOMER_DB_NAME, 2);
+    const request = indexedDB.open(CUSTOMER_DB_NAME, 3);
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains(CUSTOMER_DB_STORE)) {
         request.result.createObjectStore(CUSTOMER_DB_STORE);
+      }
+      if (!request.result.objectStoreNames.contains(CUSTOMER_ASSET_STORE)) {
+        request.result.createObjectStore(CUSTOMER_ASSET_STORE);
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -423,6 +434,50 @@ function makeBackupPayload({ customers, globalFieldLabels, layout, viewState }) 
   };
 }
 
+function collectAssetIdsFromHtml(html = '') {
+  if (!html || typeof document === 'undefined') return [];
+  const container = document.createElement('div');
+  container.innerHTML = toEditorHtml(html);
+  const ids = new Set();
+  container.querySelectorAll('img[src], img[data-editor-src]').forEach((image) => {
+    const id = getStoredAssetId(image.getAttribute('data-editor-src') || image.getAttribute('src') || '');
+    if (id) ids.add(id);
+  });
+  container.querySelectorAll('.editorAttachmentFrame[data-attachment-url]').forEach((frame) => {
+    const id = getStoredAssetId(frame.getAttribute('data-attachment-url') || '');
+    if (id) ids.add(id);
+  });
+  return Array.from(ids);
+}
+
+function collectAssetIdsFromCustomers(customers) {
+  const ids = new Set();
+  customers.forEach((customer) => {
+    collectAssetIdsFromHtml(customer.messyNotes ?? '').forEach((id) => ids.add(id));
+    (customer.timeline ?? []).forEach((item) => {
+      collectAssetIdsFromHtml(item.documentContent ?? item.content ?? '').forEach((id) => ids.add(id));
+    });
+  });
+  return Array.from(ids);
+}
+
+async function readAssetsForBackup(assetIds) {
+  const assets = {};
+  for (const assetId of assetIds) {
+    const asset = await readAssetFromIndexedDb(assetId);
+    if (asset) assets[assetId] = asset;
+  }
+  return assets;
+}
+
+async function importBackupAssets(assets = {}) {
+  const entries = Object.entries(assets);
+  for (const [id, asset] of entries) {
+    if (!asset?.dataUrl) continue;
+    await saveAssetToIndexedDb({ ...asset, id: asset.id || id });
+  }
+}
+
 function getCustomerIdentityKey(customer) {
   const parts = [customer.company, customer.contact, customer.email]
     .map((value) => String(value ?? '').trim().toLowerCase());
@@ -460,6 +515,64 @@ function formatFileSize(size = 0) {
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
+async function saveAssetToIndexedDb(asset) {
+  const db = await openCustomerDb();
+  try {
+    await new Promise((resolve, reject) => {
+      const transaction = db.transaction(CUSTOMER_ASSET_STORE, 'readwrite');
+      transaction.objectStore(CUSTOMER_ASSET_STORE).put(asset, asset.id);
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(new Error('IndexedDB asset transaction aborted'));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function readAssetFromIndexedDb(assetId) {
+  if (!assetId) return null;
+  const db = await openCustomerDb();
+  try {
+    return await new Promise((resolve, reject) => {
+      const transaction = db.transaction(CUSTOMER_ASSET_STORE, 'readonly');
+      const request = transaction.objectStore(CUSTOMER_ASSET_STORE).get(assetId);
+      request.onsuccess = () => resolve(request.result ?? null);
+      request.onerror = () => reject(request.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function saveDataUrlAsset({ dataUrl, name = '', type = '', size = 0, kind = 'file' }) {
+  const id = `asset-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  await saveAssetToIndexedDb({
+    id,
+    dataUrl,
+    name,
+    type,
+    size,
+    kind,
+    createdAt: new Date().toISOString(),
+  });
+  return makeStoredAssetUrl(id);
+}
+
+function makeStoredAssetUrl(id = '') {
+  return `${STORED_ASSET_PREFIX}${id}`;
+}
+
+function getStoredAssetId(value = '') {
+  return typeof value === 'string' && value.startsWith(STORED_ASSET_PREFIX)
+    ? value.slice(STORED_ASSET_PREFIX.length)
+    : '';
+}
+
+function isStoredAssetUrl(value = '') {
+  return Boolean(getStoredAssetId(value));
+}
+
 function getAttachmentKind(fileName = '', fileType = '') {
   const lowerName = fileName.toLowerCase();
   const lowerType = fileType.toLowerCase();
@@ -477,6 +590,16 @@ function dataUrlToArrayBuffer(dataUrl = '') {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes.buffer;
+}
+
+async function resolveStoredAssetDataUrl(url = '') {
+  const assetId = getStoredAssetId(url);
+  if (!assetId) return url;
+  const asset = await readAssetFromIndexedDb(assetId);
+  if (!asset?.dataUrl) {
+    throw new Error('资源不存在或已损坏');
+  }
+  return asset.dataUrl;
 }
 
 function dataUrlToBlobUrl(dataUrl = '', fallbackType = 'application/octet-stream') {
@@ -595,6 +718,7 @@ function App() {
   const [workflowViewMode, setWorkflowViewMode] = useState(() => initialViewState.workflowViewMode || 'single');
   const [query, setQuery] = useState('');
   const [gradeFilter, setGradeFilter] = useState('全部');
+  const [customerRenderLimit, setCustomerRenderLimit] = useState(INITIAL_CUSTOMER_RENDER_LIMIT);
   const [noteTitleDraft, setNoteTitleDraft] = useState('');
   const [editingWorkflowTitleId, setEditingWorkflowTitleId] = useState('');
   const [archiveEditing, setArchiveEditing] = useState(false);
@@ -618,6 +742,7 @@ function App() {
   const [activeEditorTextColor, setActiveEditorTextColor] = useState(DEFAULT_EDITOR_TEXT_COLOR);
   const [activeEditorBackgroundColor, setActiveEditorBackgroundColor] = useState(DEFAULT_EDITOR_BACKGROUND_COLOR);
   const [editorHydrationVersion, setEditorHydrationVersion] = useState(0);
+  const [customerStoreHydrated, setCustomerStoreHydrated] = useState(false);
   const boardRef = useRef(null);
   const editorRef = useRef(null);
   const editorSelectionRef = useRef(null);
@@ -630,6 +755,9 @@ function App() {
   const imageDragRafRef = useRef(null);
   const imageDragLastEventRef = useRef(null);
   const editorSyncTimerRef = useRef(null);
+  const editorDirtyRef = useRef(false);
+  const customerSaveTimerRef = useRef(null);
+  const editorObjectUrlsRef = useRef(new Set());
   const formatPainterRef = useRef(null);
   const dragSensors = useSensors(
     useSensor(PointerSensor, {
@@ -639,7 +767,7 @@ function App() {
     }),
   );
 
-  const selectedCustomer = customers.find((customer) => customer.id === selectedId) ?? customers[0];
+  const selectedCustomer = customers.find((customer) => customer.id === selectedId) ?? null;
   const archiveCustomer = archiveEditing && archiveDraft?.id === selectedCustomer?.id
     ? archiveDraft
     : selectedCustomer;
@@ -696,6 +824,13 @@ function App() {
         return haystack.includes(query.trim().toLowerCase()) && (gradeFilter === '全部' || customer.grade === gradeFilter);
       });
   }, [customers, gradeFilter, query]);
+  const visibleCustomers = useMemo(() => (
+    filteredCustomers.slice(0, customerRenderLimit)
+  ), [customerRenderLimit, filteredCustomers]);
+  const collapsedVisibleCustomers = useMemo(() => (
+    filteredCustomers.slice(0, COLLAPSED_CUSTOMER_RENDER_LIMIT)
+  ), [filteredCustomers]);
+  const hasMoreCustomers = filteredCustomers.length > visibleCustomers.length;
 
   const filteredMentionCustomers = useMemo(() => {
     const base = mentionQuery.trim()
@@ -724,6 +859,10 @@ function App() {
   }, [customers]);
 
   useEffect(() => {
+    setCustomerRenderLimit(INITIAL_CUSTOMER_RENDER_LIMIT);
+  }, [gradeFilter, query]);
+
+  useEffect(() => {
     if (!editorRef.current || isMergedWorkflowView) return;
     editorRef.current.innerHTML = toEditorHtml(editorContent);
     prepareEditorImages();
@@ -742,6 +881,9 @@ function App() {
   useEffect(() => () => {
     cancelAnimationFrame(imageDragRafRef.current);
     clearTimeout(editorSyncTimerRef.current);
+    clearTimeout(customerSaveTimerRef.current);
+    editorObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    editorObjectUrlsRef.current.clear();
     removeCustomImageDragListeners();
     removeImageDragGhost();
     removeImageDropMarker();
@@ -769,6 +911,8 @@ function App() {
   useEffect(() => {
     const handleBeforeUnload = () => {
       try {
+        flushEditorContentSync();
+        flushCustomersSave();
         const currentCustomers = customersRef.current;
         const serialized = JSON.stringify(currentCustomers);
         if (serialized.length <= LOCAL_STORAGE_SAFE_CUSTOMER_SIZE) {
@@ -803,6 +947,13 @@ function App() {
           console.warn('Skipped IndexedDB overwrite because user has already modified data');
           return;
         }
+        const currentCustomers = customersRef.current;
+        const selectedExistsInCurrent = currentCustomers.some((customer) => customer.id === selectedId);
+        const selectedExistsInStored = storedCustomers.some((customer) => customer.id === selectedId);
+        if (selectedId && selectedExistsInCurrent && !selectedExistsInStored) {
+          saveCustomers(currentCustomers);
+          return;
+        }
         setCustomers(storedCustomers);
         customersRef.current = storedCustomers;
         setEditorHydrationVersion((version) => version + 1);
@@ -814,6 +965,11 @@ function App() {
       })
       .catch((error) => {
         console.warn('Failed to load customers from IndexedDB', error);
+      })
+      .finally(() => {
+        if (!canceled) {
+          setCustomerStoreHydrated(true);
+        }
       });
 
     return () => {
@@ -850,6 +1006,7 @@ function App() {
 
     const hasSelectedCustomer = customers.some((customer) => customer.id === selectedId);
     if (!hasSelectedCustomer) {
+      if (!customerStoreHydrated && selectedId) return;
       setSelectedId(customers[0]?.id ?? '');
       setSelectedWorkflowId('');
       setSelectedWorkflowIds([]);
@@ -870,7 +1027,7 @@ function App() {
     if (!hasSelectedWorkflow) {
       setSelectedWorkflowId('');
     }
-  }, [customers, selectedId, selectedWorkflowId, selectedWorkflowIds]);
+  }, [customerStoreHydrated, customers, selectedId, selectedWorkflowId, selectedWorkflowIds]);
 
   useEffect(() => {
     if (!activeResizer) return undefined;
@@ -920,20 +1077,40 @@ function App() {
     };
   }, [activeResizer, leftCollapsed, leftPanelWidth, rightCollapsed, rightPanelWidth]);
 
-  function commitCustomers(nextCustomers) {
+  function commitCustomers(nextCustomers, immediate = false) {
     userModifiedSinceLoad.current = true;
     setCustomers(nextCustomers);
     customersRef.current = nextCustomers;
-    saveCustomers(nextCustomers);
+    scheduleCustomersSave(nextCustomers, immediate);
   }
 
-  function commitCustomersFromUpdater(updater) {
+  function commitCustomersFromUpdater(updater, immediate = false) {
     userModifiedSinceLoad.current = true;
     const nextCustomers = updater(customersRef.current);
     customersRef.current = nextCustomers;
     setCustomers(nextCustomers);
-    saveCustomers(nextCustomers);
+    scheduleCustomersSave(nextCustomers, immediate);
     return nextCustomers;
+  }
+
+  function scheduleCustomersSave(nextCustomers, immediate = false) {
+    clearTimeout(customerSaveTimerRef.current);
+    customerSaveTimerRef.current = null;
+    if (immediate) {
+      saveCustomers(nextCustomers);
+      return;
+    }
+    customerSaveTimerRef.current = setTimeout(() => {
+      customerSaveTimerRef.current = null;
+      saveCustomers(customersRef.current);
+    }, CUSTOMER_SAVE_DEBOUNCE_MS);
+  }
+
+  function flushCustomersSave() {
+    if (!customerSaveTimerRef.current) return;
+    clearTimeout(customerSaveTimerRef.current);
+    customerSaveTimerRef.current = null;
+    saveCustomers(customersRef.current);
   }
 
   function commitGlobalFieldLabels(nextFieldLabels) {
@@ -998,9 +1175,11 @@ function App() {
   }
 
   function saveCurrentEditorContent() {
-    const nextCustomers = getCustomersWithCurrentEditorContent();
-    commitCustomers(nextCustomers);
-    return nextCustomers;
+    if (!editorDirtyRef.current && !editorSyncTimerRef.current) {
+      return customersRef.current;
+    }
+    flushEditorContentSync();
+    return customersRef.current;
   }
 
   function getWorkflowIdFromEditorRange(range) {
@@ -1014,11 +1193,16 @@ function App() {
 
   const MAX_EXPORT_SIZE_WARNING = 100 * 1024 * 1024; // 100MB
 
-  function exportBackupData() {
+  async function exportBackupData() {
     const backupCustomers = getCustomersWithCurrentEditorContent();
     const layout = { leftCollapsed, rightCollapsed, leftPanelWidth, rightPanelWidth };
     const viewState = { selectedId, selectedWorkflowId, selectedWorkflowIds, workflowViewMode };
-    const payload = makeBackupPayload({ customers: backupCustomers, globalFieldLabels, layout, viewState });
+    const assetIds = collectAssetIdsFromCustomers(backupCustomers);
+    const assets = await readAssetsForBackup(assetIds);
+    const payload = {
+      ...makeBackupPayload({ customers: backupCustomers, globalFieldLabels, layout, viewState }),
+      assets,
+    };
     const jsonString = JSON.stringify(payload, null, 2);
 
     // Warn if the export is very large (e.g. many base64 attachments)
@@ -1043,11 +1227,12 @@ function App() {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  function applyImportedBackup(payload, mode = 'overwrite', preparedCustomers = null) {
+  async function applyImportedBackup(payload, mode = 'overwrite', preparedCustomers = null) {
     const importedCustomers = preparedCustomers ?? normalizeCustomers(Array.isArray(payload) ? payload : payload?.customers);
     if (importedCustomers.length === 0) {
       throw new Error('备份文件里没有可导入的客户数据');
     }
+    await importBackupAssets(payload?.assets);
 
     const importedFieldLabels = normalizeFieldLabels(payload?.globalFieldLabels ?? {});
     if (mode === 'append') {
@@ -1171,6 +1356,7 @@ function App() {
     setSelectedId(id);
     setSelectedWorkflowId('');
     setSelectedWorkflowIds([]);
+    saveViewState({ selectedId: id, selectedWorkflowId: '', selectedWorkflowIds: [], workflowViewMode });
     setEditingWorkflowTitleId('');
   }
 
@@ -1234,7 +1420,7 @@ function App() {
   function reorderCustomers(activeId, overId) {
     if (!overId || activeId === overId) return;
 
-    const visibleIds = filteredCustomers.map((customer) => customer.id);
+    const visibleIds = visibleCustomers.map((customer) => customer.id);
     const oldIndex = visibleIds.indexOf(activeId);
     const newIndex = visibleIds.indexOf(overId);
 
@@ -1286,9 +1472,12 @@ function App() {
       messyNotes: '',
       timeline: [],
     };
-    commitCustomers([nextCustomer, ...customers]);
+    const nextCustomers = [nextCustomer, ...customersRef.current];
+    commitCustomers(nextCustomers, true);
     setSelectedId(id);
     setSelectedWorkflowId('');
+    setSelectedWorkflowIds([]);
+    saveViewState({ selectedId: id, selectedWorkflowId: '', selectedWorkflowIds: [], workflowViewMode });
     setArchiveEditing(false);
     setArchiveDraft(null);
     setNoteTitleDraft('');
@@ -1730,18 +1919,23 @@ function App() {
     const contentHtml = getEditorHtmlForSave().trim();
     const contentText = getPlainTextFromHtml(contentHtml).trim();
     const title = noteTitleDraft.trim() || '沟通记录';
-    if (!noteTitleDraft.trim() && !contentText && !contentHtml.includes('<img')) return;
+    const hasEditorObject = /<(img|table|video|iframe)\b|editor(Image|Attachment)Frame/.test(contentHtml);
+    if (!noteTitleDraft.trim() && !contentText && !hasEditorObject) return;
+    clearTimeout(editorSyncTimerRef.current);
+    editorSyncTimerRef.current = null;
+    editorDirtyRef.current = false;
 
     const now = new Date();
     const date = now.toISOString().slice(0, 10);
     const stamp = now.toLocaleString('zh-CN', { hour12: false });
     const content = contentText || title;
+    const shouldMoveDraftIntoNewWorkflow = !selectedWorkflow && !isMergedWorkflowView;
     const item = {
       id: `t-${Date.now()}`,
       date,
       title,
       content,
-      documentContent: '',
+      documentContent: shouldMoveDraftIntoNewWorkflow ? contentHtml : '',
       status: '跟进中',
     };
     const nextNote = `${selectedCustomer.messyNotes ? `${selectedCustomer.messyNotes}\n\n` : ''}[${stamp}] ${title}\n${content}`;
@@ -1792,6 +1986,10 @@ function App() {
   function getEditorHtmlForSave() {
     if (!editorRef.current) return '';
     const clonedEditor = editorRef.current.cloneNode(true);
+    clonedEditor.querySelectorAll('img[data-editor-src]').forEach((image) => {
+      image.setAttribute('src', image.getAttribute('data-editor-src'));
+      image.removeAttribute('data-object-url');
+    });
     clonedEditor.querySelectorAll('.editorImageFrame.active').forEach((element) => {
       element.classList.remove('active');
     });
@@ -1805,15 +2003,22 @@ function App() {
     clearTimeout(editorSyncTimerRef.current);
     editorSyncTimerRef.current = null;
     if (!editorRef.current) return;
-    updateEditorContent(getEditorHtmlForSave());
+    const nextHtml = getEditorHtmlForSave();
+    if (nextHtml === editorContent) {
+      editorDirtyRef.current = false;
+      return;
+    }
+    updateEditorContent(nextHtml);
+    editorDirtyRef.current = false;
   }
 
   function syncEditorContentDebounced() {
+    editorDirtyRef.current = true;
     clearTimeout(editorSyncTimerRef.current);
     editorSyncTimerRef.current = setTimeout(() => {
       editorSyncTimerRef.current = null;
       syncEditorContent();
-    }, 300);
+    }, 700);
   }
 
   function flushEditorContentSync() {
@@ -1948,6 +2153,30 @@ function App() {
     if (!editorRef.current) return;
     editorRef.current.querySelectorAll('img').forEach((image) => {
       makeImageNonDraggable(image);
+      image.loading = 'lazy';
+      image.decoding = 'async';
+      const storedSrc = image.dataset.editorSrc || image.getAttribute('src') || '';
+      if (isStoredAssetUrl(storedSrc)) {
+        image.dataset.editorSrc = storedSrc;
+        if (!image.dataset.objectUrl || image.getAttribute('src') === storedSrc) {
+          resolveStoredAssetDataUrl(storedSrc)
+            .then((dataUrl) => {
+              if (!editorRef.current?.contains(image)) return;
+              if (image.dataset.objectUrl) {
+                URL.revokeObjectURL(image.dataset.objectUrl);
+                editorObjectUrlsRef.current.delete(image.dataset.objectUrl);
+              }
+              const objectUrl = dataUrlToBlobUrl(dataUrl, 'image/jpeg');
+              editorObjectUrlsRef.current.add(objectUrl);
+              image.dataset.objectUrl = objectUrl;
+              image.src = objectUrl;
+            })
+            .catch((error) => {
+              console.warn('Failed to load stored image asset', error);
+              image.alt = '图片资源加载失败';
+            });
+        }
+      }
       const existingFrame = image.closest('.editorImageFrame');
       if (existingFrame) {
         prepareImageFrame(existingFrame);
@@ -2338,6 +2567,7 @@ function App() {
   }
 
   const MAX_IMAGE_DIMENSION = 1200;
+  const IMAGE_EXPORT_QUALITY = 0.78;
 
   async function readImageAsResizedDataUrl(file) {
     const originalUrl = await new Promise((resolve, reject) => {
@@ -2357,17 +2587,13 @@ function App() {
         img.onload = () => {
           try {
             const { naturalWidth, naturalHeight } = img;
-            if (naturalWidth <= MAX_IMAGE_DIMENSION && naturalHeight <= MAX_IMAGE_DIMENSION) {
-              resolve(originalUrl);
-              return;
-            }
-            const scale = MAX_IMAGE_DIMENSION / Math.max(naturalWidth, naturalHeight);
+            const scale = Math.min(1, MAX_IMAGE_DIMENSION / Math.max(naturalWidth, naturalHeight));
             const canvas = document.createElement('canvas');
             canvas.width = Math.round(naturalWidth * scale);
             canvas.height = Math.round(naturalHeight * scale);
             const ctx = canvas.getContext('2d');
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-            resolve(canvas.toDataURL('image/jpeg', 0.85));
+            resolve(canvas.toDataURL('image/jpeg', IMAGE_EXPORT_QUALITY));
           } catch {
             resolve(originalUrl);
           }
@@ -2404,7 +2630,16 @@ function App() {
 
     for (const file of files) {
       try {
-        const url = await readFileAsDataUrl(file);
+        const dataUrl = await readFileAsDataUrl(file);
+        const url = dataUrl
+          ? await saveDataUrlAsset({
+            dataUrl,
+            name: file.name,
+            type: file.type,
+            size: file.size,
+            kind: getAttachmentKind(file.name, file.type),
+          })
+          : '';
         if (url) insertEditorAttachment(file, url);
       } catch (error) {
         console.error('Failed to attach file', file.name, error);
@@ -2422,24 +2657,25 @@ function App() {
     setAttachmentPreview({ name, type, size, url, kind, status: 'loading' });
 
     try {
+      const previewDataUrl = await resolveStoredAssetDataUrl(url);
       if (kind === 'pdf') {
-        const previewUrl = dataUrlToBlobUrl(url, type || 'application/pdf');
-        setAttachmentPreview({ name, type, size, url, previewUrl, kind, status: 'ready' });
+        const previewUrl = dataUrlToBlobUrl(previewDataUrl, type || 'application/pdf');
+        setAttachmentPreview({ name, type, size, url: previewDataUrl, previewUrl, kind, status: 'ready' });
         return;
       }
 
-      const arrayBuffer = dataUrlToArrayBuffer(url);
+      const arrayBuffer = dataUrlToArrayBuffer(previewDataUrl);
       if (kind === 'word' && name.toLowerCase().endsWith('.docx')) {
-        setAttachmentPreview({ name, type, size, url, kind, status: 'ready', docxBuffer: arrayBuffer });
+        setAttachmentPreview({ name, type, size, url: previewDataUrl, kind, status: 'ready', docxBuffer: arrayBuffer });
         return;
       }
 
       if (kind === 'excel') {
-        setAttachmentPreview({ name, type, size, url, kind, status: 'ready', excelBuffer: arrayBuffer });
+        setAttachmentPreview({ name, type, size, url: previewDataUrl, kind, status: 'ready', excelBuffer: arrayBuffer });
         return;
       }
 
-      setAttachmentPreview({ name, type, size, url, kind, status: 'unsupported' });
+      setAttachmentPreview({ name, type, size, url: previewDataUrl, kind, status: 'unsupported' });
     } catch (error) {
       setAttachmentPreview({ name, type, size, url, kind, status: 'error', message: error instanceof Error ? error.message : '预览失败' });
     }
@@ -2469,7 +2705,7 @@ function App() {
     syncEditorContent();
   }
 
-  function insertEditorImage(src) {
+  function insertEditorImage(src, { sync = true } = {}) {
     if (!editorRef.current) return;
     const range = ensureEditorInsertionRange();
     if (!range) return;
@@ -2481,7 +2717,25 @@ function App() {
     frame.style.width = '320px';
 
     const image = document.createElement('img');
-    image.src = src;
+    image.dataset.editorSrc = src;
+    image.loading = 'lazy';
+    image.decoding = 'async';
+    if (isStoredAssetUrl(src)) {
+      resolveStoredAssetDataUrl(src)
+        .then((dataUrl) => {
+          if (!editorRef.current?.contains(image)) return;
+          const objectUrl = dataUrlToBlobUrl(dataUrl, 'image/jpeg');
+          editorObjectUrlsRef.current.add(objectUrl);
+          image.dataset.objectUrl = objectUrl;
+          image.src = objectUrl;
+        })
+        .catch((error) => {
+          console.warn('Failed to load inserted image asset', error);
+          image.alt = '图片资源加载失败';
+        });
+    } else {
+      image.src = src;
+    }
     image.alt = '上传图片';
     makeImageNonDraggable(image);
 
@@ -2499,7 +2753,7 @@ function App() {
     selection?.addRange(range);
     clearActiveEditorImage();
     frame.classList.add('active');
-    syncEditorContent();
+    if (sync) syncEditorContent();
     saveEditorSelection();
   }
 
@@ -2517,13 +2771,24 @@ function App() {
 
     for (const file of files) {
       try {
-        const imageUrl = await readImageAsResizedDataUrl(file);
-        if (imageUrl) insertEditorImage(imageUrl);
+        const imageDataUrl = await readImageAsResizedDataUrl(file);
+        const imageUrl = imageDataUrl
+          ? await saveDataUrlAsset({
+            dataUrl: imageDataUrl,
+            name: file.name,
+            type: 'image/jpeg',
+            size: imageDataUrl.length,
+            kind: 'image',
+          })
+          : '';
+        if (imageUrl) insertEditorImage(imageUrl, { sync: false });
+        await new Promise((resolve) => requestAnimationFrame(resolve));
       } catch (error) {
         console.error('Failed to insert image', file.name, error);
         window.alert(`图片「${file.name}」读取失败，已跳过`);
       }
     }
+    syncEditorContent();
   }
 
   function handleEditorClick(event) {
@@ -3082,7 +3347,12 @@ function App() {
               <span>导出</span>
             </button>
           )}
-          <button type="button" className="topTextButton" title="备份数据" onClick={exportBackupData}>
+          <button
+            type="button"
+            className="topTextButton"
+            title="备份数据"
+            onClick={() => exportBackupData().catch((error) => window.alert(error instanceof Error ? error.message : '导出失败，请重试'))}
+          >
             <Download size={19} />
             <span>备份数据</span>
           </button>
@@ -3120,7 +3390,7 @@ function App() {
           />
           {leftCollapsed ? (
             <CollapsedCustomerRail
-              customers={filteredCustomers}
+              customers={collapsedVisibleCustomers}
               selectedId={selectedCustomer?.id}
               onSelect={selectCustomer}
             />
@@ -3142,9 +3412,9 @@ function App() {
             collisionDetection={closestCenter}
             onDragEnd={handleCustomerDragEnd}
           >
-            <SortableContext items={filteredCustomers.map((customer) => customer.id)} strategy={verticalListSortingStrategy}>
+            <SortableContext items={visibleCustomers.map((customer) => customer.id)} strategy={verticalListSortingStrategy}>
               <div className="customerList">
-                {filteredCustomers.map((customer) => (
+                {visibleCustomers.map((customer) => (
                   <SortableCustomerRow
                     key={customer.id}
                     customer={customer}
@@ -3153,6 +3423,15 @@ function App() {
                     onDelete={requestDeleteCustomer}
                   />
                 ))}
+                {hasMoreCustomers && (
+                  <button
+                    type="button"
+                    className="loadMoreCustomersButton"
+                    onClick={() => setCustomerRenderLimit((limit) => limit + CUSTOMER_RENDER_INCREMENT)}
+                  >
+                    加载更多（{filteredCustomers.length - visibleCustomers.length}）
+                  </button>
+                )}
               </div>
             </SortableContext>
           </DndContext>
@@ -3239,7 +3518,7 @@ function App() {
                   />
                   <EditorColorPicker
                     label="文字颜色"
-                    trigger="A"
+                    trigger={<Type size={15} strokeWidth={2.2} />}
                     colors={EDITOR_TEXT_COLORS}
                     currentColor={activeEditorTextColor}
                     swatchClassName="textSwatch"
@@ -3247,7 +3526,7 @@ function App() {
                   />
                   <EditorColorPicker
                     label="背景色"
-                    trigger="□"
+                    trigger={<Highlighter size={15} strokeWidth={2.2} />}
                     colors={EDITOR_BACKGROUND_COLORS}
                     currentColor={activeEditorBackgroundColor}
                     swatchClassName="backgroundSwatch"
@@ -3628,8 +3907,10 @@ function App() {
         <ImportBackupDialog
           stats={pendingImport.stats}
           onCancel={() => setPendingImport(null)}
-          onOverwrite={() => applyImportedBackup(pendingImport.payload, 'overwrite', pendingImport.importedCustomers)}
-          onAppend={() => applyImportedBackup(pendingImport.payload, 'append', pendingImport.importedCustomers)}
+          onOverwrite={() => applyImportedBackup(pendingImport.payload, 'overwrite', pendingImport.importedCustomers)
+            .catch((error) => window.alert(error instanceof Error ? error.message : '导入失败，请检查备份文件'))}
+          onAppend={() => applyImportedBackup(pendingImport.payload, 'append', pendingImport.importedCustomers)
+            .catch((error) => window.alert(error instanceof Error ? error.message : '导入失败，请检查备份文件'))}
         />
       )}
       {attachmentPreview && (

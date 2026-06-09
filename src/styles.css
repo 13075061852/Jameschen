@@ -741,6 +741,22 @@ button {
   min-width: 0;
 }
 
+.loadMoreCustomersButton {
+  width: 100%;
+  min-height: 38px;
+  border: 1px dashed rgba(0, 0, 0, 0.22);
+  border-radius: 8px;
+  color: #333333;
+  background: rgba(255, 255, 255, 0.58);
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.loadMoreCustomersButton:hover {
+  border-color: rgba(0, 0, 0, 0.36);
+  background: rgba(255, 255, 255, 0.82);
+}
+
 .customerList,
 .detailScroll,
 .archiveScroll,
@@ -1198,37 +1214,52 @@ button {
 
 .toolbarColorTrigger {
   position: relative;
-  min-width: 23px;
-  height: 23px;
-  padding: 0 4px;
+  width: 38px;
+  height: 24px;
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 2px;
-  border: 1px solid rgba(0, 0, 0, 0.16);
+  border: 1px solid rgba(0, 0, 0, 0.15);
   border-radius: 7px;
-  color: #ffffff;
-  background: #111111;
+  color: #232323;
+  background: rgba(255, 255, 255, 0.78);
   font-size: 12px;
   font-weight: 900;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: background 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.toolbarColorTrigger:hover {
+  border-color: rgba(0, 0, 0, 0.28);
+  background: #ffffff;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.08);
+}
+
+.toolbarColorTrigger::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  bottom: 3px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--active-color);
+  pointer-events: none;
 }
 
 .toolbarColorTrigger.textSwatch {
-  color: #ffffff;
-  background: var(--active-color);
-}
-
-.toolbarColorTrigger.textSwatch::after {
-  content: none;
+  color: #242424;
 }
 
 .toolbarColorTrigger.backgroundSwatch {
-  color: #111111;
-  background: var(--active-color);
+  color: #242424;
 }
 
 .toolbarColorTrigger svg {
   color: inherit;
+  flex: 0 0 auto;
 }
 
 .toolbarColorPopover {
