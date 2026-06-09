@@ -629,6 +629,7 @@ function App() {
   const imageDropMarkerRef = useRef(null);
   const imageDragRafRef = useRef(null);
   const imageDragLastEventRef = useRef(null);
+  const editorSyncTimerRef = useRef(null);
   const formatPainterRef = useRef(null);
   const dragSensors = useSensors(
     useSensor(PointerSensor, {
@@ -740,6 +741,7 @@ function App() {
 
   useEffect(() => () => {
     cancelAnimationFrame(imageDragRafRef.current);
+    clearTimeout(editorSyncTimerRef.current);
     removeCustomImageDragListeners();
     removeImageDragGhost();
     removeImageDropMarker();
@@ -1800,8 +1802,26 @@ function App() {
   }
 
   function syncEditorContent() {
+    clearTimeout(editorSyncTimerRef.current);
+    editorSyncTimerRef.current = null;
     if (!editorRef.current) return;
     updateEditorContent(getEditorHtmlForSave());
+  }
+
+  function syncEditorContentDebounced() {
+    clearTimeout(editorSyncTimerRef.current);
+    editorSyncTimerRef.current = setTimeout(() => {
+      editorSyncTimerRef.current = null;
+      syncEditorContent();
+    }, 300);
+  }
+
+  function flushEditorContentSync() {
+    if (editorSyncTimerRef.current) {
+      clearTimeout(editorSyncTimerRef.current);
+      editorSyncTimerRef.current = null;
+      syncEditorContent();
+    }
   }
 
   function saveEditorSelection() {
@@ -2317,6 +2337,49 @@ function App() {
     saveEditorSelection();
   }
 
+  const MAX_IMAGE_DIMENSION = 1200;
+
+  async function readImageAsResizedDataUrl(file) {
+    const originalUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error('读取图片失败'));
+      reader.readAsDataURL(file);
+    });
+
+    if (typeof originalUrl !== 'string' || !originalUrl) {
+      throw new Error('读取图片失败');
+    }
+
+    try {
+      return await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const { naturalWidth, naturalHeight } = img;
+            if (naturalWidth <= MAX_IMAGE_DIMENSION && naturalHeight <= MAX_IMAGE_DIMENSION) {
+              resolve(originalUrl);
+              return;
+            }
+            const scale = MAX_IMAGE_DIMENSION / Math.max(naturalWidth, naturalHeight);
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.round(naturalWidth * scale);
+            canvas.height = Math.round(naturalHeight * scale);
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            resolve(canvas.toDataURL('image/jpeg', 0.85));
+          } catch {
+            resolve(originalUrl);
+          }
+        };
+        img.onerror = () => resolve(originalUrl);
+        img.src = originalUrl;
+      });
+    } catch {
+      return originalUrl;
+    }
+  }
+
   function readFileAsDataUrl(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -2454,7 +2517,7 @@ function App() {
 
     for (const file of files) {
       try {
-        const imageUrl = await readFileAsDataUrl(file);
+        const imageUrl = await readImageAsResizedDataUrl(file);
         if (imageUrl) insertEditorImage(imageUrl);
       } catch (error) {
         console.error('Failed to insert image', file.name, error);
@@ -3238,7 +3301,8 @@ function App() {
                   className={`messyContent ${isMergedWorkflowView ? 'mergedViewContent' : ''}`}
                   contentEditable={!isMergedWorkflowView && canEditEditor}
                   suppressContentEditableWarning
-                  onInput={syncEditorContent}
+                  onInput={syncEditorContentDebounced}
+                  onBlur={flushEditorContentSync}
                   onPaste={() => setTimeout(() => linkifyAllEditorContent(), 0)}
                   onMouseDown={handleEditorMouseDown}
                   onMouseUp={saveEditorSelection}
