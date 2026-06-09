@@ -1332,6 +1332,14 @@ function App() {
     setRightCollapsed((value) => !value);
   }
 
+  function toggleMergeView() {
+    if (workflowViewMode === 'merged') {
+      changeWorkflowViewMode('single');
+    } else {
+      changeWorkflowViewMode('merged');
+    }
+  }
+
   function toggleEditorExpanded() {
     const nextExpanded = !editorExpanded;
     setLeftCollapsed(nextExpanded);
@@ -2524,6 +2532,8 @@ function App() {
               workflows={selectedCustomer?.timeline ?? []}
               selectedWorkflowId={selectedWorkflow?.id}
               onSelect={selectSingleWorkflow}
+              onMergeView={toggleMergeView}
+              isMerged={isMergedWorkflowView}
             />
           ) : selectedCustomer ? (
             <div className="archiveScroll">
@@ -2833,13 +2843,21 @@ function EditorSizePicker({ sizes, onPick }) {
   );
 }
 
-function CollapsedWorkflowRail({ workflows, selectedWorkflowId, onSelect }) {
-  const visibleWorkflows = workflows.slice(0, 8);
-
+function CollapsedWorkflowRail({ workflows, selectedWorkflowId, onSelect, onMergeView, isMerged }) {
   return (
     <div className="collapsedRail" title="最近工作流" aria-label="最近工作流">
+      {workflows.length > 1 && onMergeView && (
+        <button
+          className={`collapsedMergeButton ${isMerged ? 'active' : ''}`}
+          onClick={onMergeView}
+          title={isMerged ? '切换为单个查看' : '合并查看所有工作流'}
+          aria-label={isMerged ? '切换为单个查看' : '合并查看所有工作流'}
+        >
+          {isMerged ? '单项' : '合并'}
+        </button>
+      )}
       <div className="collapsedWorkflowList">
-        {visibleWorkflows.map((workflow) => (
+        {workflows.map((workflow) => (
           <button
             key={workflow.id}
             className={`collapsedWorkflowButton ${workflow.id === selectedWorkflowId ? 'active' : ''}`}
@@ -2851,7 +2869,7 @@ function CollapsedWorkflowRail({ workflows, selectedWorkflowId, onSelect }) {
             <small>{workflow.date?.slice(5).replace('-', '/')}</small>
           </button>
         ))}
-        {visibleWorkflows.length === 0 && (
+        {workflows.length === 0 && (
           <div className="collapsedWorkflowEmpty" title="暂无工作流">空</div>
         )}
       </div>

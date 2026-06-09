@@ -421,6 +421,30 @@ button {
   background: linear-gradient(145deg, #555555, #111111);
 }
 
+.collapsedMergeButton {
+  width: 38px;
+  min-height: 30px;
+  padding: 2px 0;
+  border: 1px solid rgba(37, 99, 235, 0.25);
+  border-radius: 8px;
+  color: #2563eb;
+  background: rgba(219, 234, 254, 0.55);
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.collapsedMergeButton:hover {
+  border-color: #2563eb;
+  background: rgba(219, 234, 254, 0.85);
+}
+
+.collapsedMergeButton.active {
+  border-color: rgba(0, 0, 0, 0.28);
+  color: #555555;
+  background: rgba(255, 255, 255, 0.72);
+}
+
 .collapsedWorkflowList {
   width: 100%;
   min-height: 0;
