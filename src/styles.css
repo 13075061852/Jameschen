@@ -1779,6 +1779,22 @@ button {
   background: linear-gradient(180deg, #202020, #000000);
 }
 
+.archiveCancelButton {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid rgba(183, 70, 70, 0.28);
+  border-radius: 8px;
+  color: #b74646;
+  background: rgba(255, 245, 245, 0.78);
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.archiveCancelButton:hover {
+  border-color: rgba(183, 70, 70, 0.5);
+  background: rgba(255, 235, 235, 0.92);
+}
+
 .archiveGlobalSaveButton {
   height: 34px;
   padding: 0 10px;

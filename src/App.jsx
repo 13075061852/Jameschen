@@ -1276,6 +1276,11 @@ function App() {
     });
   }
 
+  function cancelArchiveEditing() {
+    setArchiveEditing(false);
+    setArchiveDraft(null);
+  }
+
   function toggleArchiveEditing() {
     if (!selectedCustomer) return;
 
@@ -2772,9 +2777,14 @@ function App() {
             action={selectedCustomer && (
               <div className="archiveTitleActions">
                 {archiveEditing && (
-                  <button className="archiveGlobalSaveButton" onClick={saveArchiveAsGlobalFields}>
-                    全局保存
-                  </button>
+                  <>
+                    <button className="archiveCancelButton" onClick={cancelArchiveEditing}>
+                      取消
+                    </button>
+                    <button className="archiveGlobalSaveButton" onClick={saveArchiveAsGlobalFields}>
+                      全局保存
+                    </button>
+                  </>
                 )}
                 <button className={`archiveEditButton ${archiveEditing ? 'savingMode' : ''}`} onClick={toggleArchiveEditing}>
                   {archiveEditing ? '当前保存' : '编辑档案'}
