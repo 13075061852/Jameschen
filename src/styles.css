@@ -1446,6 +1446,7 @@ button {
   user-select: none;
   -webkit-user-drag: none;
   cursor: grab;
+  contain: layout style;
   transition: box-shadow 140ms ease, opacity 140ms ease;
 }
 
@@ -1481,6 +1482,9 @@ button {
   opacity: 0.92;
   z-index: 999;
   box-shadow: 0 14px 32px rgba(0, 0, 0, 0.18);
+  will-change: transform;
+  transform: translate3d(0, 0, 0);
+  backface-visibility: hidden;
 }
 
 .dragGhost img {
@@ -1525,6 +1529,21 @@ button {
 .messyContent .editorImageFrame.active .editorImageResizeHandle {
   opacity: 1;
   pointer-events: auto;
+}
+
+.fontSizeTooltip {
+  position: fixed;
+  z-index: 1000;
+  padding: 2px 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #ffffff;
+  background: rgba(17, 17, 17, 0.82);
+  border-radius: 4px;
+  pointer-events: none;
+  white-space: nowrap;
+  font-family: system-ui, -apple-system, sans-serif;
+  backdrop-filter: blur(4px);
 }
 
 .messyContent .editorAttachmentFrame {

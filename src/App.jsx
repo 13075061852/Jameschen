@@ -615,6 +615,7 @@ function App() {
   const [mentionWorkflowTitle, setMentionWorkflowTitle] = useState('');
   const [mentionSourceHtml, setMentionSourceHtml] = useState('');
   const [contextMenu, setContextMenu] = useState(null);
+  const [fontSizeTooltip, setFontSizeTooltip] = useState(null);
   const [activeEditorTextColor, setActiveEditorTextColor] = useState(DEFAULT_EDITOR_TEXT_COLOR);
   const [activeEditorBackgroundColor, setActiveEditorBackgroundColor] = useState(DEFAULT_EDITOR_BACKGROUND_COLOR);
   const [editorHydrationVersion, setEditorHydrationVersion] = useState(0);
@@ -627,6 +628,8 @@ function App() {
   const imageDragStateRef = useRef(null);
   const imageDragGhostRef = useRef(null);
   const imageDropMarkerRef = useRef(null);
+  const imageDragRafRef = useRef(null);
+  const imageDragLastEventRef = useRef(null);
   const formatPainterRef = useRef(null);
   const dragSensors = useSensors(
     useSensor(PointerSensor, {
@@ -737,10 +740,12 @@ function App() {
   }, [editorKey, isMergedWorkflowView, mergedWorkflowMetaKey, editorHydrationVersion]);
 
   useEffect(() => () => {
+    cancelAnimationFrame(imageDragRafRef.current);
     removeCustomImageDragListeners();
     removeImageDragGhost();
     removeImageDropMarker();
     imageDragStateRef.current = null;
+    imageDragLastEventRef.current = null;
     document.body.style.removeProperty('cursor');
     document.body.style.removeProperty('user-select');
   }, []);
@@ -2518,6 +2523,9 @@ function App() {
   }
 
   function removeCustomImageDragListeners() {
+    cancelAnimationFrame(imageDragRafRef.current);
+    imageDragRafRef.current = null;
+    imageDragLastEventRef.current = null;
     document.removeEventListener('mousemove', handleCustomImageDragMove, true);
     document.removeEventListener('mouseup', stopCustomImageDrag, true);
     window.removeEventListener('blur', stopCustomImageDrag);
@@ -2531,7 +2539,7 @@ function App() {
 
     const left = clientX - dragState.pointerOffsetX;
     const top = clientY - dragState.pointerOffsetY;
-    ghost.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
+    ghost.style.transform = `translate3d(${Math.round(left)}px, ${Math.round(top)}px, 0)`;
   }
 
   function ensureImageDropMarker(frame) {
@@ -2594,8 +2602,8 @@ function App() {
     selection?.removeAllRanges();
     selection?.addRange(range);
 
-    syncEditorContent();
     saveEditorSelection();
+    syncEditorContent();
     return true;
   }
 
@@ -2625,8 +2633,14 @@ function App() {
     if (!dragState) return;
 
     const { frame, hasMoved } = dragState;
+    const lastEvent = imageDragLastEventRef.current;
     removeCustomImageDragListeners();
     frame.classList.remove('dragging');
+
+    if (hasMoved && lastEvent) {
+      placeImageDropMarker(frame, lastEvent.clientX, lastEvent.clientY);
+    }
+
     document.body.style.removeProperty('cursor');
     document.body.style.removeProperty('user-select');
 
@@ -2639,28 +2653,38 @@ function App() {
     imageDragStateRef.current = null;
     removeImageDragGhost();
     removeImageDropMarker();
+    event?.preventDefault?.();
   }
 
   function handleCustomImageDragMove(event) {
     const dragState = imageDragStateRef.current;
     if (!dragState) return;
 
-    const movedX = event.clientX - dragState.startX;
-    const movedY = event.clientY - dragState.startY;
-    if (!dragState.hasMoved && Math.hypot(movedX, movedY) < 6) {
-      return;
-    }
-
-    dragState.hasMoved = true;
-    dragState.frame.classList.add('dragging');
-    if (!dragState.placeholderInserted) {
-      const marker = ensureImageDropMarker(dragState.frame);
-      dragState.frame.parentNode?.replaceChild(marker, dragState.frame);
-      dragState.placeholderInserted = true;
-    }
-    updateImageDragGhost(event.clientX, event.clientY);
-    placeImageDropMarker(dragState.frame, event.clientX, event.clientY);
     event.preventDefault();
+    imageDragLastEventRef.current = event;
+
+    if (imageDragRafRef.current) return;
+    imageDragRafRef.current = requestAnimationFrame(() => {
+      imageDragRafRef.current = null;
+      const latestEvent = imageDragLastEventRef.current;
+      if (!latestEvent) return;
+
+      const movedX = latestEvent.clientX - dragState.startX;
+      const movedY = latestEvent.clientY - dragState.startY;
+      if (!dragState.hasMoved && Math.hypot(movedX, movedY) < 6) {
+        return;
+      }
+
+      dragState.hasMoved = true;
+      dragState.frame.classList.add('dragging');
+      if (!dragState.placeholderInserted) {
+        const marker = ensureImageDropMarker(dragState.frame);
+        dragState.frame.parentNode?.replaceChild(marker, dragState.frame);
+        dragState.placeholderInserted = true;
+      }
+      updateImageDragGhost(latestEvent.clientX, latestEvent.clientY);
+      placeImageDropMarker(dragState.frame, latestEvent.clientX, latestEvent.clientY);
+    });
   }
 
   function beginCustomImageDrag(frame, startEvent) {
@@ -2710,6 +2734,40 @@ function App() {
     syncEditorContent();
   }
 
+  const fontSizeTooltipThrottleRef = useRef(0);
+
+  function handleEditorMouseMove(event) {
+    const now = performance.now();
+    if (now - fontSizeTooltipThrottleRef.current < 120) return;
+    fontSizeTooltipThrottleRef.current = now;
+
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const el = document.elementFromPoint(event.clientX, event.clientY);
+    if (!el || !editor.contains(el) || el.closest?.('.editorImageFrame, .editorAttachmentFrame')) {
+      setFontSizeTooltip(null);
+      return;
+    }
+
+    const fontSize = window.getComputedStyle(el).fontSize;
+    if (!fontSize) {
+      setFontSizeTooltip(null);
+      return;
+    }
+
+    setFontSizeTooltip((prev) => {
+      if (prev && prev.fontSize === fontSize && prev.x === event.clientX && prev.y === event.clientY) {
+        return prev;
+      }
+      return { x: event.clientX, y: event.clientY, fontSize };
+    });
+  }
+
+  function handleEditorMouseLeave() {
+    setFontSizeTooltip(null);
+  }
+
   function handleEditorMouseDown(event) {
     const handle = event.target.closest?.('.editorImageResizeHandle');
     if (handle && editorRef.current?.contains(handle)) {
@@ -2722,13 +2780,27 @@ function App() {
 
       const startX = event.clientX;
       const startWidth = frame.getBoundingClientRect().width;
+      const maxWidth = getMaxEditorImageWidth();
+      let resizeRafId = null;
+      let lastResizeEvent = null;
+      frame.style.willChange = 'width';
 
       function resizeImage(moveEvent) {
         moveEvent.preventDefault();
-        setEditorImageWidth(frame, startWidth + moveEvent.clientX - startX);
+        lastResizeEvent = moveEvent;
+        if (resizeRafId) return;
+        resizeRafId = requestAnimationFrame(() => {
+          resizeRafId = null;
+          if (lastResizeEvent) {
+            const nextWidth = startWidth + lastResizeEvent.clientX - startX;
+            frame.style.width = `${Math.round(Math.max(EDITOR_IMAGE_MIN_WIDTH, Math.min(maxWidth, nextWidth)))}px`;
+          }
+        });
       }
 
       function finishResize() {
+        cancelAnimationFrame(resizeRafId);
+        frame.style.willChange = '';
         window.removeEventListener('mousemove', resizeImage);
         window.removeEventListener('mouseup', finishResize);
         syncEditorContent();
@@ -3185,6 +3257,8 @@ function App() {
                   onPaste={() => setTimeout(() => linkifyAllEditorContent(), 0)}
                   onMouseDown={handleEditorMouseDown}
                   onMouseUp={saveEditorSelection}
+                  onMouseMove={handleEditorMouseMove}
+                  onMouseLeave={handleEditorMouseLeave}
                   onKeyDown={handleEditorKeyDown}
                   onKeyUp={saveEditorSelection}
                   onFocus={saveEditorSelection}
@@ -3619,6 +3693,14 @@ function App() {
               <div className="contextMenuHint">未选中文本，将仅创建空工作流</div>
             )}
           </div>
+        </div>
+      )}
+      {fontSizeTooltip && (
+        <div
+          className="fontSizeTooltip"
+          style={{ left: fontSizeTooltip.x + 12, top: fontSizeTooltip.y - 28 }}
+        >
+          {fontSizeTooltip.fontSize}
         </div>
       )}
     </main>
