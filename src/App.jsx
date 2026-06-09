@@ -1291,17 +1291,10 @@ function App() {
     setPendingImport(null);
   }
 
-  const MAX_IMPORT_FILE_SIZE = 50 * 1024 * 1024; // 50MB
-
   function importBackupData(event) {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
-
-    if (file.size > MAX_IMPORT_FILE_SIZE) {
-      window.alert(`导入文件过大（${formatFileSize(file.size)}），请选择小于 ${formatFileSize(MAX_IMPORT_FILE_SIZE)} 的文件`);
-      return;
-    }
 
     if (file.size === 0) {
       window.alert('导入文件为空，请检查备份文件');
