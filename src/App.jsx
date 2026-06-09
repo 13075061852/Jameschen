@@ -34,6 +34,7 @@ import {
   List,
   ListOrdered,
   MessageSquareText,
+  Paintbrush,
   Shrink,
   Plus,
   Redo2,
@@ -620,6 +621,7 @@ function App() {
   const imageDragStateRef = useRef(null);
   const imageDragGhostRef = useRef(null);
   const imageDropMarkerRef = useRef(null);
+  const formatPainterRef = useRef(null);
   const dragSensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -1701,8 +1703,15 @@ function App() {
     if (!selection?.rangeCount || !editorRef.current) return;
     const range = selection.getRangeAt(0);
     const editor = editorRef.current;
-    if (editor.contains(range.commonAncestorContainer)) {
-      editorSelectionRef.current = range.cloneRange();
+    if (!editor.contains(range.commonAncestorContainer)) return;
+    editorSelectionRef.current = range.cloneRange();
+
+    // Format painter: if active and new non-empty selection, apply & deactivate
+    if (formatPainterRef.current && !range.collapsed) {
+      const paintedStyle = { ...formatPainterRef.current };
+      formatPainterRef.current = null;
+      document.body.style.removeProperty('cursor');
+      setTimeout(() => applyFormatPainterStyle(paintedStyle), 0);
     }
   }
 
@@ -1885,6 +1894,89 @@ function App() {
     selection.addRange(nextRange);
     saveEditorSelection();
     syncEditorContent();
+  }
+
+  function applyFormatPainterStyle(style) {
+    // Directly apply styles to current selection without the saveEditorSelection
+    // side-effect (avoids re-entrancy from format painter auto-apply)
+    if (!editorRef.current) return;
+    const selection = window.getSelection();
+    if (!selection?.rangeCount) return;
+    const range = selection.getRangeAt(0);
+    if (!editorRef.current.contains(range.commonAncestorContainer)) return;
+    if (range.collapsed) return;
+
+    const styledSpan = document.createElement('span');
+    Object.assign(styledSpan.style, style);
+    styledSpan.appendChild(range.extractContents());
+    clearNestedEditorStyles(styledSpan, Object.keys(style));
+    applyStyleToNestedEditorElements(styledSpan, style);
+    range.insertNode(styledSpan);
+    selection.removeAllRanges();
+    const nextRange = document.createRange();
+    nextRange.selectNodeContents(styledSpan);
+    selection.addRange(nextRange);
+    syncEditorContent();
+    editorSelectionRef.current = nextRange.cloneRange();
+  }
+
+  function handleFormatPainter() {
+    // Deactivate if already active
+    if (formatPainterRef.current) {
+      formatPainterRef.current = null;
+      document.body.style.removeProperty('cursor');
+      return;
+    }
+
+    // Need a non-empty selection to copy formatting
+    if (!restoreEditorSelection()) return;
+    const selection = window.getSelection();
+    if (!selection?.rangeCount || selection.isCollapsed) return;
+
+    const range = selection.getRangeAt(0);
+    let node = range.commonAncestorContainer;
+    if (node.nodeType === Node.TEXT_NODE) node = node.parentElement;
+
+    // Walk up to find the nearest styled element
+    let el = node;
+    const style = {};
+    while (el && el !== editorRef.current) {
+      const s = el.style || {};
+      const tag = el.tagName || '';
+      const computed = window.getComputedStyle(el);
+
+      // Bold
+      if (!style.fontWeight && (computed.fontWeight === 'bold' || Number(computed.fontWeight) >= 600 || tag === 'B' || tag === 'STRONG')) {
+        style.fontWeight = computed.fontWeight >= 700 ? 'bold' : computed.fontWeight;
+      }
+      // Italic
+      if (!style.fontStyle && (computed.fontStyle === 'italic' || tag === 'I' || tag === 'EM')) {
+        style.fontStyle = 'italic';
+      }
+      // Underline
+      if (!style.textDecoration && (computed.textDecorationLine.includes('underline') || tag === 'U')) {
+        style.textDecoration = 'underline';
+      }
+      // Color
+      if (!style.color && computed.color && computed.color !== 'rgb(17, 17, 17)' && computed.color !== 'rgb(34, 34, 34)') {
+        style.color = computed.color;
+      }
+      // Background
+      if (!style.backgroundColor && computed.backgroundColor && computed.backgroundColor !== 'rgba(0, 0, 0, 0)' && computed.backgroundColor !== 'transparent') {
+        style.backgroundColor = computed.backgroundColor;
+      }
+      // Font size
+      if (!style.fontSize && s.fontSize) {
+        style.fontSize = s.fontSize;
+      }
+
+      el = el.parentElement;
+    }
+
+    if (Object.keys(style).length === 0) return;
+
+    formatPainterRef.current = style;
+    document.body.style.cursor = 'copy';
   }
 
   function applyEditorTextColor(color) {
@@ -2448,7 +2540,150 @@ function App() {
     beginCustomImageDrag(frame, event);
   }
 
+  const URL_LINKIFY_REGEX = /https?:\/\/[^\s<>"'`，。；：！？、（）：""''【】《》…]+$/i;
+
+  function autoLinkifyAtCursor() {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const selection = window.getSelection();
+    if (!selection?.rangeCount) return;
+    const range = selection.getRangeAt(0);
+    if (!range.collapsed) return;
+    if (!editor.contains(range.commonAncestorContainer)) return;
+
+    const node = range.startContainer;
+    if (node.nodeType !== Node.TEXT_NODE) return;
+    if (node.parentElement?.closest('a')) return;
+
+    const text = node.textContent;
+    const cursorPos = range.startOffset;
+    const textBeforeCursor = text.slice(0, cursorPos);
+    const match = textBeforeCursor.match(URL_LINKIFY_REGEX);
+    if (!match) return;
+
+    const url = match[0];
+    const urlStart = match.index;
+
+    // Build replacement fragments
+    const parent = node.parentNode;
+    const fragment = document.createDocumentFragment();
+    if (urlStart > 0) fragment.appendChild(document.createTextNode(text.slice(0, urlStart)));
+
+    const link = document.createElement('a');
+    link.href = url;
+    link.textContent = url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.className = 'autoLink';
+    fragment.appendChild(link);
+
+    if (cursorPos < text.length) {
+      fragment.appendChild(document.createTextNode(text.slice(cursorPos)));
+    }
+
+    parent.replaceChild(fragment, node);
+
+    // Place cursor after the link
+    const newRange = document.createRange();
+    newRange.setStartAfter(link);
+    newRange.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(newRange);
+    editorSelectionRef.current = newRange.cloneRange();
+    syncEditorContent();
+  }
+
+  function linkifyAllEditorContent() {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const URL_REGEX = /https?:\/\/[^\s<>"'`，。；：！？、（）：""''【】《》…]+/gi;
+
+    // Save cursor
+    const selection = window.getSelection();
+    let cursorKey = null;
+    if (selection?.rangeCount) {
+      const r = selection.getRangeAt(0);
+      if (editor.contains(r.commonAncestorContainer)) {
+        cursorKey = { node: r.startContainer, offset: r.startOffset };
+      }
+    }
+
+    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) => {
+        if (node.parentElement?.closest('a')) return NodeFilter.FILTER_REJECT;
+        if (node.parentElement?.closest('.editorImageFrame, .editorAttachmentFrame, .mergedWorkflowMeta')) return NodeFilter.FILTER_REJECT;
+        if (!URL_REGEX.test(node.textContent)) return NodeFilter.FILTER_REJECT;
+        URL_REGEX.lastIndex = 0;
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+
+    const nodesToProcess = [];
+    while (walker.nextNode()) nodesToProcess.push(walker.currentNode);
+
+    for (const textNode of nodesToProcess) {
+      URL_REGEX.lastIndex = 0;
+      const text = textNode.textContent;
+      const parent = textNode.parentNode;
+      const fragment = document.createDocumentFragment();
+      let lastIndex = 0;
+      let match;
+
+      while ((match = URL_REGEX.exec(text)) !== null) {
+        if (match.index > lastIndex) {
+          fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+        }
+        const link = document.createElement('a');
+        link.href = match[0];
+        link.textContent = match[0];
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.className = 'autoLink';
+        fragment.appendChild(link);
+        lastIndex = URL_REGEX.lastIndex;
+      }
+      if (lastIndex < text.length) {
+        fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
+      }
+
+      if (fragment.childNodes.length > 0) {
+        parent.replaceChild(fragment, textNode);
+      }
+    }
+
+    // Restore cursor (best-effort)
+    if (cursorKey) {
+      try {
+        const newRange = document.createRange();
+        const targetNode = cursorKey.node.parentNode?.isConnected ? cursorKey.node : editor;
+        const offset = Math.min(cursorKey.offset, targetNode.textContent?.length ?? 0);
+        newRange.setStart(targetNode, offset);
+        newRange.collapse(true);
+        selection?.removeAllRanges();
+        selection?.addRange(newRange);
+        editorSelectionRef.current = newRange.cloneRange();
+      } catch { /* ignore */ }
+    }
+
+    syncEditorContent();
+  }
+
   function handleEditorKeyDown(event) {
+    // Escape cancels format painter
+    if (event.key === 'Escape' && formatPainterRef.current) {
+      formatPainterRef.current = null;
+      document.body.style.removeProperty('cursor');
+      return;
+    }
+
+    // Auto-linkify on Space or Enter
+    if (event.key === ' ' || event.key === 'Enter') {
+      // Defer so the character is inserted first, then scan for URL
+      setTimeout(() => autoLinkifyAtCursor(), 0);
+    }
+
     if (event.key !== 'Delete' && event.key !== 'Backspace') return;
 
     const activeObject = editorRef.current?.querySelector('.editorImageFrame.active, .editorAttachmentFrame.active');
@@ -2513,6 +2748,12 @@ function App() {
           </div>
         </div>
         <div className="topActions">
+          {isMergedWorkflowView && (
+            <button type="button" className="topTextButton" title="导出合并内容" onClick={() => setExportDialogOpen(true)}>
+              <Download size={19} />
+              <span>导出</span>
+            </button>
+          )}
           <button type="button" className="topTextButton" title="备份数据" onClick={exportBackupData}>
             <Download size={19} />
             <span>备份数据</span>
@@ -2648,6 +2889,15 @@ function App() {
                   <button type="button" className="toolbarIconButton" onMouseDown={(event) => event.preventDefault()} onClick={clearEditorFormatting} title="清空格式">
                     <Eraser size={16} />
                   </button>
+                  <button
+                    type="button"
+                    className={`toolbarIconButton ${formatPainterRef.current ? 'active' : ''}`}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={handleFormatPainter}
+                    title={formatPainterRef.current ? '格式刷已激活（点击或按 Esc 取消）' : '格式刷：复制选中文字格式，再选中其他文字即可应用'}
+                  >
+                    <Paintbrush size={16} />
+                  </button>
                   <span />
                   <EditorSizePicker
                     sizes={EDITOR_FONT_SIZES}
@@ -2718,6 +2968,7 @@ function App() {
                   contentEditable={!isMergedWorkflowView && canEditEditor}
                   suppressContentEditableWarning
                   onInput={syncEditorContent}
+                  onPaste={() => setTimeout(() => linkifyAllEditorContent(), 0)}
                   onMouseDown={handleEditorMouseDown}
                   onMouseUp={saveEditorSelection}
                   onKeyDown={handleEditorKeyDown}
@@ -2803,7 +3054,6 @@ function App() {
               onSelect={selectSingleWorkflow}
               onMergeView={toggleMergeView}
               isMerged={isMergedWorkflowView}
-              onExport={() => setExportDialogOpen(true)}
             />
           ) : selectedCustomer ? (
             <div className="archiveScroll">
@@ -2824,7 +3074,6 @@ function App() {
                         disabled={!archiveEditing}
                         placeholder="未命名公司"
                       />
-                      <GradeBadge grade={archiveCustomer.grade} compact />
                     </div>
                     <span>{gradeMap[archiveCustomer.grade] ? `${gradeMap[archiveCustomer.grade]} · ` : ''}{archiveCustomer.country || '未填写国家'}</span>
                   </div>
@@ -3137,7 +3386,7 @@ function EditorSizePicker({ sizes, onPick }) {
   );
 }
 
-function CollapsedWorkflowRail({ workflows, selectedWorkflowId, onSelect, onMergeView, isMerged, onExport }) {
+function CollapsedWorkflowRail({ workflows, selectedWorkflowId, onSelect, onMergeView, isMerged }) {
   return (
     <div className="collapsedRail" title="最近工作流" aria-label="最近工作流">
       {workflows.length > 1 && onMergeView && (
@@ -3148,16 +3397,6 @@ function CollapsedWorkflowRail({ workflows, selectedWorkflowId, onSelect, onMerg
           aria-label={isMerged ? '切换为单个查看' : '合并查看所有工作流'}
         >
           合并
-        </button>
-      )}
-      {isMerged && onExport && (
-        <button
-          className="collapsedExportButton"
-          onClick={onExport}
-          title="导出合并内容"
-          aria-label="导出合并内容"
-        >
-          导出
         </button>
       )}
       <div className="collapsedWorkflowList">

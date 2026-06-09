@@ -1063,6 +1063,16 @@ button {
   background: rgba(0, 0, 0, 0.07);
 }
 
+.toolbarIconButton.active {
+  color: #ffffff;
+  background: #2563eb;
+}
+
+.toolbarIconButton.active:hover {
+  color: #ffffff;
+  background: #1d4ed8;
+}
+
 .toolbarSizePicker {
   position: relative;
   flex-shrink: 0;
@@ -1363,6 +1373,15 @@ button {
 
 .messyContent a:hover {
   color: #1d4ed8;
+}
+
+.messyContent a.autoLink {
+  text-decoration: none;
+  border-bottom: 1px dashed rgba(37, 99, 235, 0.35);
+}
+
+.messyContent a.autoLink:hover {
+  border-bottom-color: #2563eb;
 }
 
 .messyContent ol,
