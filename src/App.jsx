@@ -609,6 +609,11 @@ function App() {
   const [pendingImport, setPendingImport] = useState(null);
   const [attachmentPreview, setAttachmentPreview] = useState(null);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState('');
+  const [mentionSelectedIds, setMentionSelectedIds] = useState([]);
+  const [mentionWorkflowTitle, setMentionWorkflowTitle] = useState('');
+  const [mentionSourceHtml, setMentionSourceHtml] = useState('');
   const [activeEditorTextColor, setActiveEditorTextColor] = useState(DEFAULT_EDITOR_TEXT_COLOR);
   const [activeEditorBackgroundColor, setActiveEditorBackgroundColor] = useState(DEFAULT_EDITOR_BACKGROUND_COLOR);
   const [editorHydrationVersion, setEditorHydrationVersion] = useState(0);
@@ -687,6 +692,16 @@ function App() {
         return haystack.includes(query.trim().toLowerCase()) && (gradeFilter === '全部' || customer.grade === gradeFilter);
       });
   }, [customers, gradeFilter, query]);
+
+  const filteredMentionCustomers = useMemo(() => {
+    const base = mentionQuery.trim()
+      ? customers.filter((customer) =>
+          `${customer.company} ${customer.contact} ${customer.country}`.toLowerCase().includes(mentionQuery.toLowerCase())
+        )
+      : customers;
+    // Exclude the currently selected customer — can't distribute to self
+    return base.filter((customer) => customer.id !== selectedId);
+  }, [customers, mentionQuery, selectedId]);
 
   const stats = useMemo(() => {
     return {
@@ -1257,6 +1272,62 @@ function App() {
     setSelectedWorkflowId('');
     setArchiveEditing(false);
     setArchiveDraft(null);
+    setNoteTitleDraft('');
+  }
+
+  function openMentionPopup() {
+    // Save current editor content first
+    saveCurrentEditorContent();
+
+    // Capture selected HTML from the saved editor selection (survives focus change)
+    // editorSelectionRef is a cloned Range saved on mouseup in the editor
+    let selectedHtml = '';
+    const range = editorSelectionRef.current;
+    if (range && !range.collapsed && editorRef.current) {
+      const fragment = range.cloneContents();
+      const temp = document.createElement('div');
+      temp.appendChild(fragment);
+      selectedHtml = temp.innerHTML;
+    }
+    setMentionSourceHtml(selectedHtml);
+    setMentionQuery('');
+    setMentionSelectedIds([]);
+    setMentionWorkflowTitle('');
+    setMentionOpen(true);
+  }
+
+  function confirmMentionDistribute() {
+    if (mentionSelectedIds.length === 0) return;
+
+    const title = mentionWorkflowTitle.trim() || '沟通记录';
+    const contentHtml = mentionSourceHtml;
+    const contentText = getPlainTextFromHtml(contentHtml).trim();
+    const today = new Date().toISOString().slice(0, 10);
+
+    commitCustomersFromUpdater((currentCustomers) =>
+      currentCustomers.map((customer) => {
+        if (!mentionSelectedIds.includes(customer.id)) return customer;
+        const item = {
+          id: `t-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          date: today,
+          title,
+          content: contentText || title,
+          documentContent: contentHtml,
+          status: '跟进中',
+        };
+        return {
+          ...customer,
+          lastFollowDate: today,
+          timeline: [item, ...(customer.timeline ?? [])],
+        };
+      })
+    );
+
+    setMentionOpen(false);
+    setMentionQuery('');
+    setMentionSelectedIds([]);
+    setMentionWorkflowTitle('');
+    setMentionSourceHtml('');
     setNoteTitleDraft('');
   }
 
@@ -1868,6 +1939,112 @@ function App() {
     });
   }
 
+  function stripInlineFormatting(container) {
+    // Unwrap formatting tags, preserving their text content
+    const formattingTags = ['B', 'STRONG', 'I', 'EM', 'U', 'FONT'];
+    formattingTags.forEach((tag) => {
+      const elements = Array.from(container.querySelectorAll(tag));
+      elements.forEach((el) => {
+        const parent = el.parentNode;
+        if (!parent) return;
+        while (el.firstChild) {
+          parent.insertBefore(el.firstChild, el);
+        }
+        parent.removeChild(el);
+      });
+    });
+
+    // Strip style attributes from spans, but preserve editor frame elements
+    container.querySelectorAll('span').forEach((el) => {
+      if (el.classList.contains('editorImageFrame') ||
+          el.classList.contains('editorAttachmentFrame') ||
+          el.classList.contains('editorImageResizeHandle') ||
+          el.classList.contains('editorImageDropMarker') ||
+          el.classList.contains('editorAttachmentIcon') ||
+          el.classList.contains('editorAttachmentText')) {
+        return;
+      }
+      if (el.classList.contains('editorItalic')) {
+        el.classList.remove('editorItalic');
+      }
+      el.removeAttribute('style');
+    });
+  }
+
+  function collectFormattingFromElement(el, defaults, style) {
+    const computed = window.getComputedStyle(el);
+    const tag = el.tagName;
+
+    // Bold: from <b>/<strong> tag or computed font-weight
+    if (!style.fontWeight) {
+      if (tag === 'B' || tag === 'STRONG') {
+        style.fontWeight = 'bold';
+      } else {
+        const w = computed.fontWeight;
+        if (w && w !== '400' && w !== 'normal') {
+          style.fontWeight = w;
+        }
+      }
+    }
+
+    // Italic: from <i>/<em> tag, .editorItalic class, or computed font-style
+    if (!style.fontStyle) {
+      if (tag === 'I' || tag === 'EM' || el.classList?.contains('editorItalic')) {
+        style.fontStyle = 'italic';
+      } else if (computed.fontStyle === 'italic' || computed.fontStyle === 'oblique') {
+        style.fontStyle = 'italic';
+      }
+    }
+
+    // Underline / line-through: from <u> tag or computed text-decoration
+    if (!style.textDecoration) {
+      if (tag === 'U') {
+        style.textDecoration = 'underline';
+      } else {
+        const deco = computed.textDecorationLine;
+        if (deco && deco !== 'none') {
+          if (deco.includes('underline')) {
+            style.textDecoration = 'underline';
+          } else if (deco.includes('line-through')) {
+            style.textDecoration = 'line-through';
+          }
+        }
+      }
+    }
+
+    // Text color
+    if (!style.color) {
+      const defaultColor = defaults?.color || 'rgb(17, 17, 17)';
+      if (computed.color && computed.color !== defaultColor) {
+        style.color = computed.color;
+      }
+    }
+
+    // Background color
+    if (!style.backgroundColor) {
+      const bg = computed.backgroundColor;
+      if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent' && bg !== (defaults?.backgroundColor || '')) {
+        style.backgroundColor = bg;
+      }
+    }
+
+    // Font size
+    if (!style.fontSize) {
+      const defaultFontSize = defaults?.fontSize || '14px';
+      if (computed.fontSize && computed.fontSize !== defaultFontSize) {
+        style.fontSize = computed.fontSize;
+      }
+    }
+
+    // Font family
+    if (!style.fontFamily) {
+      const defaultFontFamily = defaults?.fontFamily || '';
+      if (computed.fontFamily && computed.fontFamily !== defaultFontFamily) {
+        style.fontFamily = computed.fontFamily;
+      }
+    }
+  }
+
   function applyEditorStyle(style) {
     if (!restoreEditorSelection()) return;
     const selection = window.getSelection();
@@ -1908,11 +2085,19 @@ function App() {
     const range = selection.getRangeAt(0);
     if (range.collapsed) return;
 
+    // Extract selected content and strip all existing inline formatting
+    const fragment = range.extractContents();
+    const tempContainer = document.createElement('span');
+    tempContainer.appendChild(fragment);
+    stripInlineFormatting(tempContainer);
+
+    // Wrap the cleaned content in a single span with the captured styles
     const styledSpan = document.createElement('span');
     Object.assign(styledSpan.style, style);
-    styledSpan.appendChild(range.extractContents());
-    clearNestedEditorStyles(styledSpan, Object.keys(style));
-    applyStyleToNestedEditorElements(styledSpan, style);
+    while (tempContainer.firstChild) {
+      styledSpan.appendChild(tempContainer.firstChild);
+    }
+
     range.insertNode(styledSpan);
     selection.removeAllRanges();
     const nextRange = document.createRange();
@@ -1936,66 +2121,19 @@ function App() {
     if (!selection?.rangeCount || selection.isCollapsed) return;
 
     const range = selection.getRangeAt(0);
-
-    // Start from the element at the beginning of the selection
-    let startEl = range.startContainer;
-    if (startEl.nodeType === Node.TEXT_NODE) {
-      startEl = startEl.parentElement;
-    }
-
-    // Get computed styles of the exact element at selection start
-    const computed = window.getComputedStyle(startEl);
-    // Default editor styles for comparison
     const defaults = editorRef.current ? window.getComputedStyle(editorRef.current) : null;
-
     const style = {};
 
-    // Font weight (bold) — capture only if not the default normal weight
-    const weight = computed.fontWeight;
-    if (weight && weight !== '400' && weight !== 'normal') {
-      style.fontWeight = weight;
+    // Walk up from the selection start through all ancestor elements,
+    // collecting tag-based and inline formatting at each level.
+    // The innermost element's styles take priority (checked first).
+    let el = range.startContainer;
+    if (el.nodeType === Node.TEXT_NODE) {
+      el = el.parentElement;
     }
-
-    // Font style (italic / oblique) — computed value OR custom editor italic
-    const isItalic = computed.fontStyle === 'italic'
-      || computed.fontStyle === 'oblique'
-      || startEl.closest('.editorItalic, i, em');
-    if (isItalic) {
-      style.fontStyle = 'italic';
-    }
-
-    // Text decoration (underline / line-through)
-    const deco = computed.textDecorationLine;
-    if (deco && deco !== 'none') {
-      if (deco.includes('underline')) {
-        style.textDecoration = 'underline';
-      } else if (deco.includes('line-through')) {
-        style.textDecoration = 'line-through';
-      }
-    }
-
-    // Text color — compare against editor default color
-    const defaultColor = defaults?.color || 'rgb(17, 17, 17)';
-    if (computed.color && computed.color !== defaultColor) {
-      style.color = computed.color;
-    }
-
-    // Background color
-    const bg = computed.backgroundColor;
-    if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent' && bg !== (defaults?.backgroundColor || '')) {
-      style.backgroundColor = bg;
-    }
-
-    // Font size
-    const defaultFontSize = defaults?.fontSize || '14px';
-    if (computed.fontSize && computed.fontSize !== defaultFontSize) {
-      style.fontSize = computed.fontSize;
-    }
-
-    // Font family
-    const defaultFontFamily = defaults?.fontFamily || '';
-    if (computed.fontFamily && computed.fontFamily !== defaultFontFamily) {
-      style.fontFamily = computed.fontFamily;
+    while (el && el !== editorRef.current && el.nodeType === Node.ELEMENT_NODE) {
+      collectFormattingFromElement(el, defaults, style);
+      el = el.parentElement;
     }
 
     if (Object.keys(style).length === 0) return;
@@ -3016,11 +3154,19 @@ function App() {
                 <input
                   className="composerTitle"
                   value={noteTitleDraft}
-                  onChange={(event) => setNoteTitleDraft(event.target.value)}
+                  onChange={(event) => {
+                    const nextValue = event.target.value;
+                    if (nextValue.endsWith('@') && nextValue.length > (noteTitleDraft?.length ?? 0)) {
+                      openMentionPopup();
+                      setNoteTitleDraft(nextValue.slice(0, -1));
+                      return;
+                    }
+                    setNoteTitleDraft(nextValue);
+                  }}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') addMessyNote();
                   }}
-                  placeholder="输入标题或用户名称"
+                  placeholder="输入标题或用户名称，输入@分发到多个客户"
                 />
                 <div className="composerActions">
                   <button type="button" className="composerIconButton" onClick={addMessyNote}>
@@ -3328,6 +3474,82 @@ function App() {
             setAttachmentPreview(null);
           }}
         />
+      )}
+      {mentionOpen && (
+        <div className="confirmOverlay" role="presentation" onMouseDown={() => setMentionOpen(false)}>
+          <div className="mentionDialog" role="dialog" aria-modal="true" aria-labelledby="mentionDialogTitle" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="mentionHeader">
+              <h3 id="mentionDialogTitle">分发到多个客户</h3>
+              {mentionSourceHtml ? (
+                <div className="mentionSourcePreview">
+                  <span className="mentionSourceLabel">选中内容预览</span>
+                  <div className="mentionSourceContent" dangerouslySetInnerHTML={{ __html: mentionSourceHtml }} />
+                </div>
+              ) : (
+                <span className="mentionSourceHint mentionNoSelection">未选中任何文本，将仅创建空工作流</span>
+              )}
+            </div>
+            <div className="mentionSearch">
+              <Search size={16} />
+              <input
+                value={mentionQuery}
+                onChange={(event) => setMentionQuery(event.target.value)}
+                placeholder="搜索客户..."
+                autoFocus
+              />
+            </div>
+            <div className="mentionCustomerList">
+              {filteredMentionCustomers.length === 0 ? (
+                <div className="mentionEmpty">没有匹配的客户</div>
+              ) : (
+                filteredMentionCustomers.map((customer) => (
+                  <label key={customer.id} className={`mentionCustomerRow ${mentionSelectedIds.includes(customer.id) ? 'checked' : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={mentionSelectedIds.includes(customer.id)}
+                      onChange={() => {
+                        setMentionSelectedIds((current) =>
+                          current.includes(customer.id)
+                            ? current.filter((id) => id !== customer.id)
+                            : [...current, customer.id]
+                        );
+                      }}
+                    />
+                    <BrandLogo company={customer.company} />
+                    <div className="mentionCustomerInfo">
+                      <strong>{customer.company || '未命名客户'}</strong>
+                      <span>{[customer.contact, customer.country].filter(Boolean).join(' · ') || '无详细信息'}</span>
+                    </div>
+                    <GradeBadge grade={customer.grade} />
+                  </label>
+                ))
+              )}
+            </div>
+            <div className="mentionWorkflowInput">
+              <label>工作流名称</label>
+              <input
+                value={mentionWorkflowTitle}
+                onChange={(event) => setMentionWorkflowTitle(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && mentionSelectedIds.length > 0) {
+                    confirmMentionDistribute();
+                  }
+                }}
+                placeholder={mentionSourceHtml ? '输入工作流名称（选填）' : '输入工作流名称'}
+              />
+            </div>
+            <div className="mentionActions">
+              <button className="confirmCancel" onClick={() => setMentionOpen(false)}>取消</button>
+              <button
+                className="confirmDanger"
+                onClick={confirmMentionDistribute}
+                disabled={mentionSelectedIds.length === 0}
+              >
+                分发到 {mentionSelectedIds.length} 个客户
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </main>
   );
