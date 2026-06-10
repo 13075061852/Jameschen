@@ -733,6 +733,7 @@ function App() {
   const [customerRenderLimit, setCustomerRenderLimit] = useState(INITIAL_CUSTOMER_RENDER_LIMIT);
   const [noteTitleDraft, setNoteTitleDraft] = useState('');
   const [editingWorkflowTitleId, setEditingWorkflowTitleId] = useState('');
+  const [workflowSortOrder, setWorkflowSortOrder] = useState('desc');
   const [archiveEditing, setArchiveEditing] = useState(false);
   const [archiveDraft, setArchiveDraft] = useState(null);
   const [batchMode, setBatchMode] = useState(false);
@@ -786,7 +787,20 @@ function App() {
   const archiveCustomer = archiveEditing && archiveDraft?.id === selectedCustomer?.id
     ? archiveDraft
     : selectedCustomer;
-  const selectedCustomerTimeline = selectedCustomer?.timeline ?? [];
+  const selectedCustomerTimeline = useMemo(
+    () => selectedCustomer?.timeline ?? [],
+    [selectedCustomer?.id, selectedCustomer?.timeline]
+  );
+  const sortedTimeline = useMemo(() => {
+    if (!selectedCustomerTimeline.length) return [];
+    return [...selectedCustomerTimeline].sort((a, b) => {
+      const dateA = a.date || '';
+      const dateB = b.date || '';
+      return workflowSortOrder === 'asc'
+        ? dateA.localeCompare(dateB)
+        : dateB.localeCompare(dateA);
+    });
+  }, [selectedCustomerTimeline, workflowSortOrder]);
   const focusedWorkflow = selectedCustomer?.timeline?.find((item) => item.id === selectedWorkflowId) ?? null;
   const selectedWorkflow = focusedWorkflow
     ?? selectedCustomerTimeline[0]
@@ -854,9 +868,8 @@ function App() {
           `${customer.company} ${customer.contact} ${customer.country}`.toLowerCase().includes(mentionQuery.toLowerCase())
         )
       : customers;
-    // Exclude the currently selected customer — can't distribute to self
-    return base.filter((customer) => customer.id !== selectedId);
-  }, [customers, mentionQuery, selectedId]);
+    return base;
+  }, [customers, mentionQuery]);
 
   const stats = useMemo(() => {
     return {
@@ -3955,6 +3968,13 @@ function App() {
                     </div>
                     <div className="archiveWorkflowActions">
                       <button
+                        className="workflowSortToggle"
+                        onClick={() => setWorkflowSortOrder((o) => (o === 'desc' ? 'asc' : 'desc'))}
+                        title={workflowSortOrder === 'desc' ? '当前：最新在前，点击切换' : '当前：最早在前，点击切换'}
+                      >
+                        {workflowSortOrder === 'desc' ? '正序' : '反序'}
+                      </button>
+                      <button
                         className="archiveDeleteWorkflowButton"
                         onClick={() => activeWorkflowForActions && deleteWorkflow(activeWorkflowForActions.id)}
                         disabled={!activeWorkflowForActions}
@@ -3965,8 +3985,8 @@ function App() {
                     </div>
                   </div>
 
-                  <div className={`archiveTimeline ${(selectedCustomer.timeline ?? []).length === 0 ? 'emptyTimeline' : ''}`}>
-                  {(selectedCustomer.timeline ?? []).map((item) => {
+                  <div className={`archiveTimeline ${sortedTimeline.length === 0 ? 'emptyTimeline' : ''}`}>
+                  {sortedTimeline.map((item) => {
                     const editingTitle = editingWorkflowTitleId === item.id;
                     const isSelected = isMergedWorkflowView
                       ? selectedWorkflowIds.includes(item.id)

@@ -898,6 +898,7 @@ button {
 .customerList,
 .detailScroll,
 .archiveScroll,
+.archiveCard,
 .archiveTimeline,
 .messyContent {
   scrollbar-width: thin;
@@ -907,6 +908,7 @@ button {
 .customerList::-webkit-scrollbar,
 .detailScroll::-webkit-scrollbar,
 .archiveScroll::-webkit-scrollbar,
+.archiveCard::-webkit-scrollbar,
 .archiveTimeline::-webkit-scrollbar,
 .messyContent::-webkit-scrollbar {
   width: 4px;
@@ -915,13 +917,15 @@ button {
 
 .customerList::-webkit-scrollbar-track,
 .detailScroll::-webkit-scrollbar-track,
-.archiveScroll::-webkit-scrollbar-track {
+.archiveScroll::-webkit-scrollbar-track,
+.archiveCard::-webkit-scrollbar-track {
   background: transparent;
 }
 
 .customerList::-webkit-scrollbar-thumb,
 .detailScroll::-webkit-scrollbar-thumb,
 .archiveScroll::-webkit-scrollbar-thumb,
+.archiveCard::-webkit-scrollbar-thumb,
 .archiveTimeline::-webkit-scrollbar-thumb,
 .messyContent::-webkit-scrollbar-thumb {
   background: #111111;
@@ -1962,7 +1966,8 @@ button {
   flex-direction: column;
   border: 0;
   border-radius: 0;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   background: transparent;
   box-shadow: none;
 }
@@ -1974,6 +1979,7 @@ button {
   flex-wrap: wrap;
   align-items: flex-start;
   background: rgba(255, 255, 255, 0.78);
+  flex-shrink: 0;
 }
 
 .archiveHero .brandLogo.large {
@@ -2143,6 +2149,7 @@ button {
   overflow: hidden;
   border: 1px solid rgba(0, 0, 0, 0.07);
   border-radius: 8px;
+  flex-shrink: 0;
 }
 
 .archiveField {
@@ -2220,8 +2227,8 @@ button {
 }
 
 .archiveWorkflowBlock {
-  flex: 0 1 auto;
-  min-height: 0;
+  flex: 1 1 0;
+  min-height: 160px;
   display: flex;
   flex-direction: column;
   padding: 14px 12px 12px;
@@ -2245,6 +2252,22 @@ button {
   display: flex;
   align-items: center;
   gap: 7px;
+}
+
+.workflowSortToggle {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #555555;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.workflowSortToggle:hover {
+  background: rgba(0, 0, 0, 0.05);
 }
 
 .archiveWorkflowHeader h3 {
@@ -2282,8 +2305,8 @@ button {
 }
 
 .archiveTimeline {
-  flex: none;
-  max-height: 360px;
+  flex: 1;
+  min-height: 0;
   border: 1px solid rgba(0, 0, 0, 0.09);
   border-radius: 8px;
   overflow-x: hidden;
