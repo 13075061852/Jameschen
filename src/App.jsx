@@ -212,6 +212,13 @@ function saveCustomers(customers) {
   }
 }
 
+function cleanupUnusedAssets(customers) {
+  if (!Array.isArray(customers)) return;
+  deleteUnusedAssetsFromIndexedDb(collectAssetIdsFromCustomers(customers)).catch((error) => {
+    console.warn('Failed to clean unused assets', error);
+  });
+}
+
 function openCustomerDb() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(CUSTOMER_DB_NAME, 3);
@@ -482,6 +489,31 @@ async function readAssetFromIndexedDb(assetId) {
       const request = transaction.objectStore(CUSTOMER_ASSET_STORE).get(assetId);
       request.onsuccess = () => resolve(request.result ?? null);
       request.onerror = () => reject(request.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function deleteUnusedAssetsFromIndexedDb(usedAssetIds = []) {
+  const usedIds = new Set(usedAssetIds);
+  const db = await openCustomerDb();
+  try {
+    await new Promise((resolve, reject) => {
+      const transaction = db.transaction(CUSTOMER_ASSET_STORE, 'readwrite');
+      const store = transaction.objectStore(CUSTOMER_ASSET_STORE);
+      const request = store.getAllKeys();
+      request.onsuccess = () => {
+        (request.result ?? []).forEach((key) => {
+          if (typeof key === 'string' && !usedIds.has(key)) {
+            store.delete(key);
+          }
+        });
+      };
+      request.onerror = () => reject(request.error);
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(new Error('IndexedDB asset cleanup aborted'));
     });
   } finally {
     db.close();
@@ -1242,6 +1274,7 @@ function App() {
     setSelectedWorkflowId(importedViewState.selectedWorkflowId);
     setSelectedWorkflowIds(importedViewState.selectedWorkflowIds);
     setWorkflowViewMode(importedViewState.workflowViewMode);
+    setEditorHydrationVersion((version) => version + 1);
     saveViewState({ ...importedViewState, selectedId: validSelectedId });
     setArchiveEditing(false);
     setArchiveDraft(null);
@@ -1371,6 +1404,7 @@ function App() {
   function reorderCustomers(activeId, overId) {
     if (!overId || activeId === overId) return;
 
+    saveCurrentEditorContent();
     const currentCustomers = customersRef.current;
     const oldIndex = currentCustomers.findIndex((c) => c.id === activeId);
     const newIndex = currentCustomers.findIndex((c) => c.id === overId);
@@ -1561,8 +1595,10 @@ function App() {
   }
 
   function performDeleteCustomer(customerId) {
-    const nextCustomers = customers.filter((customer) => customer.id !== customerId);
+    const currentCustomers = getCustomersWithCurrentEditorContent();
+    const nextCustomers = currentCustomers.filter((customer) => customer.id !== customerId);
     commitCustomers(nextCustomers);
+    cleanupUnusedAssets(nextCustomers);
     if (selectedId === customerId) {
       const nextVisibleCustomer = filteredCustomers.find((customer) => customer.id !== customerId) ?? nextCustomers[0];
       setSelectedId(nextVisibleCustomer?.id ?? '');
@@ -1614,8 +1650,10 @@ function App() {
 
   function performBatchDelete(ids) {
     const idSet = new Set(ids);
-    const nextCustomers = customers.filter((c) => !idSet.has(c.id));
+    const currentCustomers = getCustomersWithCurrentEditorContent();
+    const nextCustomers = currentCustomers.filter((c) => !idSet.has(c.id));
     commitCustomers(nextCustomers);
+    cleanupUnusedAssets(nextCustomers);
     if (idSet.has(selectedId)) {
       const nextCustomer = nextCustomers[0];
       setSelectedId(nextCustomer?.id ?? '');
@@ -1681,8 +1719,30 @@ function App() {
       }
     });
 
-    // Remove attachment frames entirely
-    container.querySelectorAll('.editorAttachmentFrame').forEach((frame) => frame.remove());
+    container.querySelectorAll('.editorAttachmentFrame').forEach((frame) => {
+      const name = frame.dataset.attachmentName || '附件';
+      const type = frame.dataset.attachmentType || '';
+      const size = Number(frame.dataset.attachmentSize || 0);
+      const url = frame.dataset.attachmentUrl || '';
+      const kind = getAttachmentKind(name, type);
+      const link = document.createElement(url ? 'a' : 'span');
+      link.className = 'exportAttachmentLink';
+      if (url) {
+        link.setAttribute('href', url);
+        link.setAttribute('download', name);
+      }
+      link.textContent = `${kind === 'video' ? 'Video' : 'Attachment'}: ${name}${size ? ` (${formatFileSize(size)})` : ''}`;
+      link.style.display = 'inline-block';
+      link.style.margin = '6px 0';
+      link.style.padding = '8px 10px';
+      link.style.border = '1px solid #d4d4d4';
+      link.style.borderRadius = '6px';
+      link.style.color = '#222222';
+      link.style.background = '#f8f8f8';
+      link.style.textDecoration = 'none';
+      link.style.fontSize = '13px';
+      frame.replaceWith(link);
+    });
 
     // Remove resize handles
     container.querySelectorAll('.editorImageResizeHandle').forEach((el) => el.remove());
@@ -1691,7 +1751,7 @@ function App() {
     const isEmptyBlock = (el) => {
       if (!el) return true;
       // Keep elements that contain images or attachments
-      if (el.querySelector('img, video')) return false;
+      if (el.querySelector('img, video, .exportAttachmentLink')) return false;
       const text = (el.textContent ?? '').replace(/ /g, ' ').trim();
       // Keep if it has any meaningful text
       if (text) return false;
@@ -3597,24 +3657,29 @@ function App() {
     const items = event.clipboardData?.items;
     const files = event.clipboardData?.files;
     const imageBlobs = [];
+    const videoFiles = [];
 
-    // Collect image blobs from clipboard items
+    // Collect image/video blobs from clipboard items
     if (items) {
       for (const item of items) {
         if (item.type.startsWith('image/') || item.kind === 'file') {
           const blob = item.getAsFile();
           if (blob && blob.type.startsWith('image/')) {
             imageBlobs.push(blob);
+          } else if (blob && isVideoFile(blob)) {
+            videoFiles.push(blob);
           }
         }
       }
     }
 
-    // Also check clipboard files (Safari may only expose images here)
-    if (files && imageBlobs.length === 0) {
+    // Also check clipboard files (Safari may expose media only here)
+    if (files && imageBlobs.length === 0 && videoFiles.length === 0) {
       for (const file of files) {
         if (file.type.startsWith('image/')) {
           imageBlobs.push(file);
+        } else if (isVideoFile(file)) {
+          videoFiles.push(file);
         }
       }
     }
@@ -3637,6 +3702,45 @@ function App() {
           }
         } catch (error) {
           console.warn('Failed to paste image', error);
+        }
+      }
+      syncEditorContent();
+      return;
+    }
+
+    if (videoFiles.length > 0) {
+      const MAX_TOTAL_PASTED_VIDEO_SIZE = 300 * 1024 * 1024;
+      const totalSize = videoFiles.reduce((sum, file) => sum + file.size, 0);
+      if (totalSize > MAX_TOTAL_PASTED_VIDEO_SIZE) {
+        window.alert(`视频总大小（${formatFileSize(totalSize)}）超过上限 ${formatFileSize(MAX_TOTAL_PASTED_VIDEO_SIZE)}，请分批粘贴`);
+        return;
+      }
+
+      for (const file of videoFiles) {
+        try {
+          const dataUrl = await readFileAsDataUrl(file);
+          const videoUrl = dataUrl
+            ? await saveDataUrlAsset({
+                dataUrl,
+                name: file.name || 'pasted-video.mp4',
+                type: file.type || 'video/mp4',
+                size: file.size,
+                kind: 'video',
+              })
+            : '';
+          if (videoUrl) {
+            insertEditorVideo(
+              {
+                name: file.name || 'pasted-video.mp4',
+                type: file.type || 'video/mp4',
+                size: file.size,
+              },
+              videoUrl,
+              { sync: false },
+            );
+          }
+        } catch (error) {
+          console.warn('Failed to paste video', error);
         }
       }
       syncEditorContent();
@@ -3776,6 +3880,7 @@ function App() {
     event.preventDefault();
     activeObject.remove();
     syncEditorContent();
+    cleanupUnusedAssets(customersRef.current);
     editorRef.current?.focus();
   }
 
@@ -3793,15 +3898,18 @@ function App() {
 
   function performDeleteWorkflow(workflowId) {
     if (!selectedCustomer) return;
-    const timeline = selectedCustomer.timeline ?? [];
+    const currentCustomers = saveCurrentEditorContent();
+    const currentCustomer = currentCustomers.find((customer) => customer.id === selectedCustomer.id) ?? selectedCustomer;
+    const timeline = currentCustomer.timeline ?? [];
     const nextTimeline = timeline.filter((item) => item.id !== workflowId);
     const nextSelectedWorkflow = nextTimeline[0]?.id ?? '';
     // Only update timeline and lastFollowDate — never overwrite messyNotes
     // when deleting a workflow, as they are separate data fields.
     updateCustomer(selectedCustomer.id, {
       timeline: nextTimeline,
-      lastFollowDate: nextTimeline[0]?.date ?? selectedCustomer.lastFollowDate,
+      lastFollowDate: nextTimeline[0]?.date ?? currentCustomer.lastFollowDate,
     });
+    cleanupUnusedAssets(customersRef.current);
     setSelectedWorkflowId(nextSelectedWorkflow);
     setSelectedWorkflowIds((current) => current.filter((item) => item !== workflowId));
     if (editingWorkflowTitleId === workflowId) {
@@ -3812,13 +3920,16 @@ function App() {
   function performDeleteWorkflows(workflowIds) {
     if (!selectedCustomer) return;
     const idSet = new Set(workflowIds);
-    const timeline = selectedCustomer.timeline ?? [];
+    const currentCustomers = saveCurrentEditorContent();
+    const currentCustomer = currentCustomers.find((customer) => customer.id === selectedCustomer.id) ?? selectedCustomer;
+    const timeline = currentCustomer.timeline ?? [];
     const nextTimeline = timeline.filter((item) => !idSet.has(item.id));
     const nextSelectedWorkflow = nextTimeline[0]?.id ?? '';
     updateCustomer(selectedCustomer.id, {
       timeline: nextTimeline,
-      lastFollowDate: nextTimeline[0]?.date ?? selectedCustomer.lastFollowDate,
+      lastFollowDate: nextTimeline[0]?.date ?? currentCustomer.lastFollowDate,
     });
+    cleanupUnusedAssets(customersRef.current);
     setSelectedWorkflowId(nextSelectedWorkflow);
     setSelectedWorkflowIds([]);
     if (editingWorkflowTitleId && idSet.has(editingWorkflowTitleId)) {
