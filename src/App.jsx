@@ -3323,9 +3323,40 @@ function App() {
     syncEditorContent();
   }
 
-  function handleEditorPaste(event) {
+  async function handleEditorPaste(event) {
     event.preventDefault();
 
+    // Check for image in clipboard first
+    const items = event.clipboardData?.items;
+    if (items) {
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          const blob = item.getAsFile();
+          if (blob) {
+            try {
+              const imageDataUrl = await readImageAsResizedDataUrl(blob);
+              const imageUrl = imageDataUrl
+                ? await saveDataUrlAsset({
+                    dataUrl: imageDataUrl,
+                    name: 'pasted-image.png',
+                    type: 'image/jpeg',
+                    size: imageDataUrl.length,
+                    kind: 'image',
+                  })
+                : '';
+              if (imageUrl) {
+                insertEditorImage(imageUrl, { sync: true });
+              }
+            } catch (error) {
+              console.warn('Failed to paste image', error);
+            }
+            return;
+          }
+        }
+      }
+    }
+
+    // Fallback: paste as text
     const clipboardText = event.clipboardData?.getData('text/plain');
     if (!clipboardText || !editorRef.current) return;
 
