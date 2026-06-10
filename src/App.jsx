@@ -3342,6 +3342,36 @@ function App() {
     syncEditorContent();
   }
 
+  function handleEditorPaste(event) {
+    event.preventDefault();
+
+    const clipboardText = event.clipboardData?.getData('text/plain');
+    if (!clipboardText || !editorRef.current) return;
+
+    const range = ensureEditorInsertionRange();
+    if (!range) return;
+
+    // Delete any currently selected content
+    range.deleteContents();
+
+    // Insert pasted text
+    const textNode = document.createTextNode(clipboardText);
+    range.insertNode(textNode);
+
+    // Move cursor AFTER the inserted text
+    const newRange = document.createRange();
+    newRange.setStartAfter(textNode);
+    newRange.collapse(true);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(newRange);
+    editorSelectionRef.current = newRange.cloneRange();
+
+    syncEditorContent();
+    // Auto-linkify URLs in the pasted content
+    setTimeout(() => linkifyAllEditorContent(), 0);
+  }
+
   function handleEditorKeyDown(event) {
     // Escape cancels format painter
     if (event.key === 'Escape' && formatPainterRef.current) {
@@ -3671,7 +3701,7 @@ function App() {
                   suppressContentEditableWarning
                   onInput={syncEditorContentDebounced}
                   onBlur={flushEditorContentSync}
-                  onPaste={() => setTimeout(() => linkifyAllEditorContent(), 0)}
+                  onPaste={handleEditorPaste}
                   onMouseDown={handleEditorMouseDown}
                   onMouseUp={saveEditorSelection}
                   onMouseMove={handleEditorMouseMove}
