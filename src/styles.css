@@ -1835,8 +1835,9 @@ button {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 7px;
+  flex-shrink: 0;
 }
 
 .archiveEditButton {

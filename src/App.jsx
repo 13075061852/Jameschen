@@ -72,7 +72,7 @@ const DEFAULT_RIGHT_PANEL_WIDTH = 540;
 const COLLAPSED_PANEL_WIDTH = 48;
 const RESIZER_WIDTH = 10;
 const MIN_LEFT_PANEL_WIDTH = 260;
-const MIN_RIGHT_PANEL_WIDTH = 360;
+const MIN_RIGHT_PANEL_WIDTH = 420;
 const MIN_CENTER_PANEL_WIDTH = 360;
 const LOCAL_STORAGE_SAFE_CUSTOMER_SIZE = 1_500_000;
 const CUSTOMER_SAVE_DEBOUNCE_MS = 900;
@@ -864,7 +864,7 @@ function App() {
 
   useEffect(() => {
     if (!editorRef.current || isMergedWorkflowView) return;
-    editorRef.current.innerHTML = toEditorHtml(editorContent);
+    editorRef.current.innerHTML = toEditorHtml(stripStoredAssetSrcBeforeDomInsert(editorContent));
     prepareEditorImages();
     prepareEditorAttachments();
     editorSelectionRef.current = null;
@@ -872,7 +872,7 @@ function App() {
 
   useEffect(() => {
     if (!editorRef.current || !isMergedWorkflowView) return;
-    editorRef.current.innerHTML = toEditorHtml(editorContent);
+    editorRef.current.innerHTML = toEditorHtml(stripStoredAssetSrcBeforeDomInsert(editorContent));
     prepareEditorImages();
     prepareEditorAttachments();
     editorSelectionRef.current = null;
@@ -1701,11 +1701,51 @@ function App() {
     return container.innerHTML;
   }
 
-  function buildExportHtml(workflows, customerName) {
+  async function resolveHtmlAssetUrls(html) {
+    if (!html || typeof document === 'undefined') return html;
+    const container = document.createElement('div');
+    container.innerHTML = toEditorHtml(html);
+
+    // Resolve dbasset: URLs in <img> tags
+    const images = Array.from(container.querySelectorAll('img[src]'));
+    const imgResolutions = images.map(async (img) => {
+      const src = img.getAttribute('src') || '';
+      if (!isStoredAssetUrl(src)) return;
+      try {
+        const dataUrl = await resolveStoredAssetDataUrl(src);
+        img.setAttribute('src', dataUrl);
+      } catch (error) {
+        console.warn('Failed to resolve image asset for export', error);
+        img.alt = '图片加载失败';
+        img.removeAttribute('src');
+      }
+    });
+
+    // Resolve dbasset: URLs in attachment frames
+    const attachments = Array.from(container.querySelectorAll('.editorAttachmentFrame[data-attachment-url]'));
+    const attachmentResolutions = attachments.map(async (frame) => {
+      const url = frame.getAttribute('data-attachment-url') || '';
+      if (!isStoredAssetUrl(url)) return;
+      try {
+        const dataUrl = await resolveStoredAssetDataUrl(url);
+        frame.setAttribute('data-attachment-url', dataUrl);
+      } catch (error) {
+        console.warn('Failed to resolve attachment asset for export', error);
+        frame.removeAttribute('data-attachment-url');
+      }
+    });
+
+    await Promise.all([...imgResolutions, ...attachmentResolutions]);
+    return container.innerHTML;
+  }
+
+  async function buildExportHtml(workflows, customerName) {
     const title = customerName || '未命名客户';
     const date = new Date().toLocaleString('zh-CN', { hour12: false });
-    const sections = workflows.map((item) => {
-      const content = stripEditorFramesForExport(item.documentContent ?? item.content ?? '');
+    const sections = (await Promise.all(workflows.map(async (item) => {
+      const rawContent = item.documentContent ?? item.content ?? '';
+      const resolvedContent = await resolveHtmlAssetUrls(rawContent);
+      const content = stripEditorFramesForExport(resolvedContent);
       const statusText = item.status ?? '';
       return [
         '<section style="margin-bottom:24px;page-break-inside:avoid;">',
@@ -1717,13 +1757,13 @@ function App() {
         `<div style="color:#2d3741;line-height:1.7;font-size:14px;white-space:pre-wrap;word-break:break-word;">${content}</div>`,
         '</section>',
       ].join('');
-    }).join('');
+    }))).join('');
 
     return [
       '<!DOCTYPE html>',
       '<html lang="zh-CN">',
       '<head><meta charset="UTF-8">',
-      `<title>${escapeHtml(title)} - 工作流合并导出</title>`,
+      `<title>${escapeHtml(title)} - 工作流导出</title>`,
       '<style>',
       'body{max-width:800px;margin:0 auto;padding:40px 32px;font-family:"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;color:#111;background:#fff;}',
       'h1{margin:0 0 8px;font-size:22px;}',
@@ -1741,13 +1781,21 @@ function App() {
     ].join('');
   }
 
-  async function handleExportPDF() {
+  function getExportWorkflows() {
     const customerTimeline = selectedCustomer?.timeline ?? [];
-    const merged = customerTimeline.filter((item) => selectedWorkflowIds.includes(item.id));
-    if (merged.length === 0) return;
+    if (isMergedWorkflowView) {
+      return customerTimeline.filter((item) => selectedWorkflowIds.includes(item.id));
+    }
+    if (selectedWorkflow) return [selectedWorkflow];
+    return [];
+  }
+
+  async function handleExportPDF() {
+    const workflows = getExportWorkflows();
+    if (workflows.length === 0) return;
     setExportDialogOpen(false);
 
-    const html = buildExportHtml(merged, selectedCustomerTitle);
+    const html = await buildExportHtml(workflows, selectedCustomerTitle);
 
     // Render full HTML in a hidden iframe so <style> is applied properly
     const iframe = document.createElement('iframe');
@@ -1828,7 +1876,8 @@ function App() {
       }
 
       const stamp = new Date().toISOString().slice(0, 10);
-      pdf.save(`${selectedCustomer?.company || '客户'}_工作流合并_${stamp}.pdf`);
+      const modeLabel = isMergedWorkflowView ? '合并' : '单独';
+      pdf.save(`${selectedCustomer?.company || '客户'}_工作流${modeLabel}_${stamp}.pdf`);
     } catch (error) {
       console.error('PDF export failed', error);
     } finally {
@@ -1836,17 +1885,18 @@ function App() {
     }
   }
 
-  function handleExportWord() {
+  async function handleExportWord() {
     setExportDialogOpen(false);
-    const customerTimeline = selectedCustomer?.timeline ?? [];
-    const merged = customerTimeline.filter((item) => selectedWorkflowIds.includes(item.id));
-    if (merged.length === 0) return;
+    const workflows = getExportWorkflows();
+    if (workflows.length === 0) return;
 
     const title = selectedCustomerTitle || '未命名客户';
     const date = new Date().toLocaleString('zh-CN', { hour12: false });
 
-    const sections = merged.map((item) => {
-      const content = stripEditorFramesForExport(item.documentContent ?? item.content ?? '');
+    const sections = (await Promise.all(workflows.map(async (item) => {
+      const rawContent = item.documentContent ?? item.content ?? '';
+      const resolvedContent = await resolveHtmlAssetUrls(rawContent);
+      const content = stripEditorFramesForExport(resolvedContent);
       const statusText = item.status ?? '';
       return [
         `<h2 style="font-size:14pt;color:#333;margin:18pt 0 6pt 0;border-bottom:1pt solid #ddd;padding-bottom:6pt;">${escapeHtml(item.title ?? item.content ?? '沟通记录')}</h2>`,
@@ -1855,9 +1905,9 @@ function App() {
         statusText ? ` &middot; <span style="color:#087678;">${escapeHtml(statusText)}</span>` : '',
         '</p>',
         `<div style="font-size:11pt;line-height:1.8;color:#222;">${content}</div>`,
-        merged.indexOf(item) < merged.length - 1 ? '<hr style="margin:18pt 0;border:0;border-top:1px dashed #ccc;" />' : '',
+        workflows.indexOf(item) < workflows.length - 1 ? '<hr style="margin:18pt 0;border:0;border-top:1px dashed #ccc;" />' : '',
       ].join('');
-    }).join('');
+    }))).join('');
 
     const wordDoc = [
       '<html xmlns:o="urn:schemas-microsoft-com:office:office"',
@@ -1877,7 +1927,7 @@ function App() {
       '</head>',
       '<body>',
       `<h1 style="font-size:18pt;color:#111;margin:0 0 4pt 0;">${escapeHtml(title)}</h1>`,
-      `<p style="color:#888;font-size:9pt;margin:0 0 20pt 0;">导出时间：${date} ｜ 共 ${merged.length} 条工作流</p>`,
+      `<p style="color:#888;font-size:9pt;margin:0 0 20pt 0;">导出时间：${date} ｜ 共 ${workflows.length} 条工作流</p>`,
       sections,
       '</body>',
       '</html>',
@@ -1889,7 +1939,8 @@ function App() {
     const link = document.createElement('a');
     const stamp = new Date().toISOString().slice(0, 10);
     link.href = url;
-    link.download = `${selectedCustomer?.company || '客户'}_工作流合并_${stamp}.doc`;
+    const modeLabelWord = isMergedWorkflowView ? '合并' : '单独';
+    link.download = `${selectedCustomer?.company || '客户'}_工作流${modeLabelWord}_${stamp}.doc`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -2147,6 +2198,31 @@ function App() {
     const kind = getAttachmentKind(frame.dataset.attachmentName ?? '', frame.dataset.attachmentType ?? '');
     frame.classList.remove('attachmentPdf', 'attachmentWord', 'attachmentExcel', 'attachmentFile');
     frame.classList.add(`attachment${kind.charAt(0).toUpperCase()}${kind.slice(1)}`);
+  }
+
+  function stripStoredAssetSrcBeforeDomInsert(html) {
+    // Remove dbasset: URLs from img[src] before innerHTML insertion so the
+    // browser doesn't attempt to fetch the unknown scheme and flood the console
+    // with ERR_UNKNOWN_URL_SCHEME errors. The real src is kept in
+    // data-editor-src so prepareEditorImages can resolve it asynchronously.
+    if (!html || typeof document === 'undefined') return html;
+    const container = document.createElement('div');
+    container.innerHTML = html;
+    container.querySelectorAll('img[src]').forEach((img) => {
+      const src = img.getAttribute('src') || '';
+      if (isStoredAssetUrl(src)) {
+        img.setAttribute('data-editor-src', src);
+        img.removeAttribute('src');
+      }
+    });
+    container.querySelectorAll('.editorAttachmentFrame[data-attachment-url]').forEach((frame) => {
+      const url = frame.getAttribute('data-attachment-url') || '';
+      if (isStoredAssetUrl(url)) {
+        // Keep the attribute – attachment frames don't trigger network requests.
+        // prepareEditorAttachments handles them synchronously.
+      }
+    });
+    return container.innerHTML;
   }
 
   function prepareEditorImages() {
@@ -3328,12 +3404,10 @@ function App() {
           </div>
         </div>
         <div className="topActions">
-          {isMergedWorkflowView && (
-            <button type="button" className="topTextButton" title="导出合并内容" onClick={() => setExportDialogOpen(true)}>
-              <Download size={19} />
-              <span>导出</span>
-            </button>
-          )}
+          <button type="button" className="topTextButton" title="导出工作流内容" onClick={() => setExportDialogOpen(true)}>
+            <Download size={19} />
+            <span>导出</span>
+          </button>
           <button
             type="button"
             className="topTextButton"
@@ -3876,7 +3950,7 @@ function App() {
               <Download size={20} />
             </div>
             <div className="confirmContent">
-              <h3 id="exportDialogTitle">导出合并内容</h3>
+              <h3 id="exportDialogTitle">{isMergedWorkflowView ? '导出合并内容' : '导出工作流内容'}</h3>
               <p>请选择导出格式</p>
             </div>
             <div className="confirmActions exportDialogActions">
