@@ -100,82 +100,7 @@ const gradeMap = {
   D: '一般',
 };
 
-const seedCustomers = [
-  {
-    id: 'c-001',
-    serialNumber: '1',
-    pinned: true,
-    company: '华为',
-    grade: 'A',
-    country: '中国',
-    website: 'www.huawei.com',
-    contact: '王军',
-    email: 'aaaa@xxx.com',
-    phone: 'xxxxxxxxxxxx',
-    fax: 'xxxxxxxxxxxx',
-    otherContact: '微信 / WhatsApp',
-    remark: '重点客户，报价后需要持续跟进',
-    backup1: '通信设备',
-    backup2: '华南区',
-    backup3: '年度询价',
-    backup4: '可约视频会议',
-    lastFollowDate: '2026-03-01',
-    reminderDays: '30',
-    messyNotes: '客户上次提到希望把不同产品线拆开报价。电话里对交期比较敏感，后续沟通先确认预算和采购节奏。',
-    timeline: [
-      { id: 't-1', date: '2026-03-01', content: '邮件跟进，客户暂无反馈', status: '跟进中' },
-      { id: 't-2', date: '2026-02-01', content: '电话确认客户是否收到报价，无应答', status: '待确认' },
-      { id: 't-3', date: '2026-01-18', content: '客户询价，整理产品目录和价格表', status: '已完成' },
-      { id: 't-4', date: '2017-01-03', content: '邮件跟进，客户暂无反馈', status: '已完成' },
-    ],
-  },
-  {
-    id: 'c-002',
-    serialNumber: '2',
-    pinned: false,
-    company: '小米',
-    grade: 'A',
-    country: '中国',
-    website: 'www.xiaomi.com',
-    contact: '张丽',
-    email: 'aaaa@xxx.com',
-    phone: 'xxxxxxxxxx',
-    fax: 'xxxxxxxxxx',
-    otherContact: '企业微信',
-    remark: '价格敏感，适合批量方案',
-    backup1: '智能硬件',
-    backup2: '',
-    backup3: '',
-    backup4: '',
-    lastFollowDate: '2026-02-18',
-    reminderDays: '30',
-    messyNotes: '先发产品清单，再补一版阶梯报价。',
-    timeline: [{ id: 't-5', date: '2026-02-18', content: '发送第一版报价单', status: '跟进中' }],
-  },
-  {
-    id: 'c-003',
-    serialNumber: '3',
-    pinned: false,
-    company: '三星',
-    grade: 'B',
-    country: '韩国',
-    website: 'www.samsung.com',
-    contact: '李娜',
-    email: 'aaaa@xxx.com',
-    phone: 'xxxxxxxxxx',
-    fax: 'xxxxxxxxxx',
-    otherContact: 'WhatsApp',
-    remark: '需要英文资料',
-    backup1: '海外客户',
-    backup2: '',
-    backup3: '',
-    backup4: '',
-    lastFollowDate: '2026-01-03',
-    reminderDays: '100',
-    messyNotes: '资料要用英文版，邮件标题需要写明型号。',
-    timeline: [{ id: 't-6', date: '2026-01-03', content: '邮件跟进，客户暂未反馈', status: '暂停' }],
-  },
-];
+const seedCustomers = [];
 
 const archiveFields = [
   ['company', '名字'],
@@ -4181,7 +4106,7 @@ function App() {
                 <div className="mentionEmpty">没有匹配的客户</div>
               ) : (
                 filteredMentionCustomers.map((customer) => (
-                  <label key={customer.id} className={`mentionCustomerRow ${mentionSelectedIds.includes(customer.id) ? 'checked' : ''}`}>
+                  <label key={customer.id} className={`mentionCustomerRow ${mentionSelectedIds.includes(customer.id) ? 'checked' : ''} ${customer.id === selectedCustomer?.id ? 'isSelf' : ''}`}>
                     <input
                       type="checkbox"
                       checked={mentionSelectedIds.includes(customer.id)}
@@ -4199,6 +4124,7 @@ function App() {
                       <span>{[customer.contact, customer.country].filter(Boolean).join(' · ') || '无详细信息'}</span>
                     </div>
                     <GradeBadge grade={customer.grade} />
+                    {customer.id === selectedCustomer?.id && <span className="selfBadge">我</span>}
                   </label>
                 ))
               )}
