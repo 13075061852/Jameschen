@@ -2810,6 +2810,21 @@ function App() {
       image.src = src;
     }
     image.alt = '上传图片';
+    image.addEventListener('error', function onImageError() {
+      if (this.dataset.editorSrc && isStoredAssetUrl(this.dataset.editorSrc)) {
+        resolveStoredAssetDataUrl(this.dataset.editorSrc)
+          .then((dataUrl) => {
+            if (!editorRef.current?.contains(this)) return;
+            const objectUrl = dataUrlToBlobUrl(dataUrl, 'image/jpeg');
+            editorObjectUrlsRef.current.add(objectUrl);
+            this.dataset.objectUrl = objectUrl;
+            this.src = objectUrl;
+          })
+          .catch(() => {
+            this.alt = '图片加载失败';
+          });
+      }
+    });
     makeImageNonDraggable(image);
 
     const handle = document.createElement('span');
@@ -3328,32 +3343,52 @@ function App() {
 
     // Check for image in clipboard first
     const items = event.clipboardData?.items;
+    const files = event.clipboardData?.files;
+    const imageBlobs = [];
+
+    // Collect image blobs from clipboard items
     if (items) {
       for (const item of items) {
-        if (item.type.startsWith('image/')) {
+        if (item.type.startsWith('image/') || item.kind === 'file') {
           const blob = item.getAsFile();
-          if (blob) {
-            try {
-              const imageDataUrl = await readImageAsResizedDataUrl(blob);
-              const imageUrl = imageDataUrl
-                ? await saveDataUrlAsset({
-                    dataUrl: imageDataUrl,
-                    name: 'pasted-image.png',
-                    type: 'image/jpeg',
-                    size: imageDataUrl.length,
-                    kind: 'image',
-                  })
-                : '';
-              if (imageUrl) {
-                insertEditorImage(imageUrl, { sync: true });
-              }
-            } catch (error) {
-              console.warn('Failed to paste image', error);
-            }
-            return;
+          if (blob && blob.type.startsWith('image/')) {
+            imageBlobs.push(blob);
           }
         }
       }
+    }
+
+    // Also check clipboard files (Safari may only expose images here)
+    if (files && imageBlobs.length === 0) {
+      for (const file of files) {
+        if (file.type.startsWith('image/')) {
+          imageBlobs.push(file);
+        }
+      }
+    }
+
+    if (imageBlobs.length > 0) {
+      for (const blob of imageBlobs) {
+        try {
+          const imageDataUrl = await readImageAsResizedDataUrl(blob);
+          const imageUrl = imageDataUrl
+            ? await saveDataUrlAsset({
+                dataUrl: imageDataUrl,
+                name: blob.name || 'pasted-image.png',
+                type: 'image/jpeg',
+                size: imageDataUrl.length,
+                kind: 'image',
+              })
+            : '';
+          if (imageUrl) {
+            insertEditorImage(imageUrl, { sync: false });
+          }
+        } catch (error) {
+          console.warn('Failed to paste image', error);
+        }
+      }
+      syncEditorContent();
+      return;
     }
 
     // Fallback: paste as text
@@ -3501,6 +3536,23 @@ function App() {
     }
   }
 
+  function performDeleteWorkflows(workflowIds) {
+    if (!selectedCustomer) return;
+    const idSet = new Set(workflowIds);
+    const timeline = selectedCustomer.timeline ?? [];
+    const nextTimeline = timeline.filter((item) => !idSet.has(item.id));
+    const nextSelectedWorkflow = nextTimeline[0]?.id ?? '';
+    updateCustomer(selectedCustomer.id, {
+      timeline: nextTimeline,
+      lastFollowDate: nextTimeline[0]?.date ?? selectedCustomer.lastFollowDate,
+    });
+    setSelectedWorkflowId(nextSelectedWorkflow);
+    setSelectedWorkflowIds([]);
+    if (editingWorkflowTitleId && idSet.has(editingWorkflowTitleId)) {
+      setEditingWorkflowTitleId('');
+    }
+  }
+
   function confirmPendingDelete() {
     if (!pendingDelete) return;
     if (pendingDelete.type === 'customer') {
@@ -3508,6 +3560,9 @@ function App() {
     }
     if (pendingDelete.type === 'batch') {
       performBatchDelete(pendingDelete.ids);
+    }
+    if (pendingDelete.type === 'workflows') {
+      performDeleteWorkflows(pendingDelete.ids);
     }
     if (pendingDelete.type === 'workflow') {
       performDeleteWorkflow(pendingDelete.id);
@@ -3986,8 +4041,21 @@ function App() {
                       <button
                         type="button"
                         className="archiveDeleteWorkflowButton"
-                        onClick={() => activeWorkflowForActions && deleteWorkflow(activeWorkflowForActions.id)}
-                        disabled={!activeWorkflowForActions}
+                        onClick={() => {
+                          if (isMergedWorkflowView && mergedWorkflows.length > 0) {
+                            const ids = mergedWorkflows.map((w) => w.id);
+                            const titles = mergedWorkflows.map((w) => w.title ?? '沟通记录').join('、');
+                            setPendingDelete({
+                              type: 'workflows',
+                              ids,
+                              title: '批量删除工作流',
+                              message: `确定删除选中的 ${ids.length} 个工作流（${titles}）吗？对应文档内容也会一起删除。`,
+                            });
+                          } else if (selectedWorkflow) {
+                            deleteWorkflow(selectedWorkflow.id);
+                          }
+                        }}
+                        disabled={isMergedWorkflowView ? mergedWorkflows.length === 0 : !selectedWorkflow}
                       >
                         <Trash2 size={14} />
                         删除
@@ -4225,7 +4293,6 @@ function App() {
               )}
             </div>
             <div className="mentionWorkflowInput">
-              <label>工作流名称</label>
               <input
                 value={mentionWorkflowTitle}
                 onChange={(event) => setMentionWorkflowTitle(event.target.value)}
