@@ -3691,7 +3691,17 @@ function App() {
               </div>
             </div>
           ) : (
-            <EmptyState text="暂无用户，请先添加一个用户。" />
+            <div className="emptyStateWithAction">
+              <div className="emptyStateIcon">
+                <UserRound size={48} />
+              </div>
+              <p className="emptyStateTitle">暂无用户</p>
+              <p className="emptyStateHint">点击下方按钮创建第一位用户</p>
+              <button type="button" className="emptyStateAddButton" onClick={addCustomer}>
+                <Plus size={18} />
+                添加用户
+              </button>
+            </div>
           )}
         </section>
 
