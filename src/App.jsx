@@ -49,6 +49,7 @@ import {
   Undo2,
   Upload,
   UserRound,
+  Video,
 } from 'lucide-react';
 
 const STORAGE_KEY = 'personal-workflow-manager-v1';
@@ -78,6 +79,7 @@ const EDITOR_BACKGROUND_COLORS = ['#fff7ad', '#fee2e2', '#dbeafe', '#dcfce7', '#
 const DEFAULT_EDITOR_TEXT_COLOR = EDITOR_TEXT_COLORS[0];
 const DEFAULT_EDITOR_BACKGROUND_COLOR = EDITOR_BACKGROUND_COLORS[5];
 const EDITOR_ATTACHMENT_ACCEPT = '.pdf,.doc,.docx,.xls,.xlsx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+const EDITOR_VIDEO_ACCEPT = 'video/*';
 const EDITOR_IMAGE_MIN_WIDTH = 80;
 const DEFAULT_LEFT_PANEL_WIDTH = 360;
 const DEFAULT_RIGHT_PANEL_WIDTH = 540;
@@ -380,6 +382,10 @@ function collectAssetIdsFromHtml(html = '') {
     const id = getStoredAssetId(image.getAttribute('data-editor-src') || image.getAttribute('src') || '');
     if (id) ids.add(id);
   });
+  container.querySelectorAll('video[src], video[data-editor-src]').forEach((video) => {
+    const id = getStoredAssetId(video.getAttribute('data-editor-src') || video.getAttribute('src') || '');
+    if (id) ids.add(id);
+  });
   container.querySelectorAll('.editorAttachmentFrame[data-attachment-url]').forEach((frame) => {
     const id = getStoredAssetId(frame.getAttribute('data-attachment-url') || '');
     if (id) ids.add(id);
@@ -513,6 +519,7 @@ function isStoredAssetUrl(value = '') {
 function getAttachmentKind(fileName = '', fileType = '') {
   const lowerName = fileName.toLowerCase();
   const lowerType = fileType.toLowerCase();
+  if (lowerType.startsWith('video/') || /\.(mp4|webm|ogg|mov|m4v)$/i.test(lowerName)) return 'video';
   if (lowerType.includes('pdf') || lowerName.endsWith('.pdf')) return 'pdf';
   if (lowerType.includes('word') || lowerName.endsWith('.docx') || lowerName.endsWith('.doc')) return 'word';
   if (lowerType.includes('excel') || lowerType.includes('spreadsheet') || lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls')) return 'excel';
@@ -688,6 +695,7 @@ function App() {
   const editorRef = useRef(null);
   const editorSelectionRef = useRef(null);
   const imageInputRef = useRef(null);
+  const videoInputRef = useRef(null);
   const attachmentInputRef = useRef(null);
   const backupInputRef = useRef(null);
   const imageDragStateRef = useRef(null);
@@ -814,6 +822,7 @@ function App() {
     if (!editorRef.current || isMergedWorkflowView) return;
     editorRef.current.innerHTML = toEditorHtml(stripStoredAssetSrcBeforeDomInsert(editorContent));
     prepareEditorImages();
+    prepareEditorVideos();
     prepareEditorAttachments();
     editorSelectionRef.current = null;
   }, [editorKey, isMergedWorkflowView, editorHydrationVersion]);
@@ -822,6 +831,7 @@ function App() {
     if (!editorRef.current || !isMergedWorkflowView) return;
     editorRef.current.innerHTML = toEditorHtml(stripStoredAssetSrcBeforeDomInsert(editorContent));
     prepareEditorImages();
+    prepareEditorVideos();
     prepareEditorAttachments();
     editorSelectionRef.current = null;
   }, [editorKey, isMergedWorkflowView, mergedWorkflowMetaKey, editorHydrationVersion]);
@@ -1657,6 +1667,20 @@ function App() {
       }
     });
 
+    container.querySelectorAll('.editorVideoFrame').forEach((frame) => {
+      const video = frame.querySelector('video');
+      if (video) {
+        video.controls = true;
+        video.style.maxWidth = '100%';
+        video.style.display = 'block';
+        video.style.margin = '8px 0';
+        video.style.borderRadius = '6px';
+        frame.replaceWith(video);
+      } else {
+        frame.remove();
+      }
+    });
+
     // Remove attachment frames entirely
     container.querySelectorAll('.editorAttachmentFrame').forEach((frame) => frame.remove());
 
@@ -1667,7 +1691,7 @@ function App() {
     const isEmptyBlock = (el) => {
       if (!el) return true;
       // Keep elements that contain images or attachments
-      if (el.querySelector('img')) return false;
+      if (el.querySelector('img, video')) return false;
       const text = (el.textContent ?? '').replace(/ /g, ' ').trim();
       // Keep if it has any meaningful text
       if (text) return false;
@@ -1715,6 +1739,19 @@ function App() {
       }
     });
 
+    const videos = Array.from(container.querySelectorAll('video[src]'));
+    const videoResolutions = videos.map(async (video) => {
+      const src = video.getAttribute('src') || '';
+      if (!isStoredAssetUrl(src)) return;
+      try {
+        const dataUrl = await resolveStoredAssetDataUrl(src);
+        video.setAttribute('src', dataUrl);
+      } catch (error) {
+        console.warn('Failed to resolve video asset for export', error);
+        video.removeAttribute('src');
+      }
+    });
+
     // Resolve dbasset: URLs in attachment frames
     const attachments = Array.from(container.querySelectorAll('.editorAttachmentFrame[data-attachment-url]'));
     const attachmentResolutions = attachments.map(async (frame) => {
@@ -1729,7 +1766,7 @@ function App() {
       }
     });
 
-    await Promise.all([...imgResolutions, ...attachmentResolutions]);
+    await Promise.all([...imgResolutions, ...videoResolutions, ...attachmentResolutions]);
     return container.innerHTML;
   }
 
@@ -2028,7 +2065,14 @@ function App() {
       image.setAttribute('src', image.getAttribute('data-editor-src'));
       image.removeAttribute('data-object-url');
     });
+    clonedEditor.querySelectorAll('video[data-editor-src]').forEach((video) => {
+      video.setAttribute('src', video.getAttribute('data-editor-src'));
+      video.removeAttribute('data-object-url');
+    });
     clonedEditor.querySelectorAll('.editorImageFrame.active').forEach((element) => {
+      element.classList.remove('active');
+    });
+    clonedEditor.querySelectorAll('.editorVideoFrame.active').forEach((element) => {
       element.classList.remove('active');
     });
     clonedEditor.querySelectorAll('.editorAttachmentFrame.active').forEach((element) => {
@@ -2172,9 +2216,16 @@ function App() {
     });
   }
 
+  function clearActiveEditorVideo() {
+    editorRef.current?.querySelectorAll('.editorVideoFrame.active').forEach((element) => {
+      element.classList.remove('active');
+    });
+  }
+
   function clearActiveEditorObjects() {
     clearActiveEditorImage();
     clearActiveEditorAttachment();
+    clearActiveEditorVideo();
   }
 
   function makeImageNonDraggable(image) {
@@ -2193,7 +2244,7 @@ function App() {
     frame.draggable = false;
     frame.setAttribute('draggable', 'false');
     const kind = getAttachmentKind(frame.dataset.attachmentName ?? '', frame.dataset.attachmentType ?? '');
-    frame.classList.remove('attachmentPdf', 'attachmentWord', 'attachmentExcel', 'attachmentFile');
+    frame.classList.remove('attachmentPdf', 'attachmentWord', 'attachmentExcel', 'attachmentVideo', 'attachmentFile');
     frame.classList.add(`attachment${kind.charAt(0).toUpperCase()}${kind.slice(1)}`);
   }
 
@@ -2212,6 +2263,13 @@ function App() {
         img.removeAttribute('src');
       }
     });
+    container.querySelectorAll('video[src]').forEach((video) => {
+      const src = video.getAttribute('src') || '';
+      if (isStoredAssetUrl(src)) {
+        video.setAttribute('data-editor-src', src);
+        video.removeAttribute('src');
+      }
+    });
     container.querySelectorAll('.editorAttachmentFrame[data-attachment-url]').forEach((frame) => {
       const url = frame.getAttribute('data-attachment-url') || '';
       if (isStoredAssetUrl(url)) {
@@ -2220,6 +2278,66 @@ function App() {
       }
     });
     return container.innerHTML;
+  }
+
+  function prepareEditorVideos() {
+    if (!editorRef.current) return;
+    editorRef.current.querySelectorAll('video').forEach((video) => {
+      if (video.closest('.editorAttachmentFrame')) return;
+      const existingFrame = video.closest('.editorVideoFrame');
+      const url = video.dataset.editorSrc || video.getAttribute('src') || '';
+      if (url) {
+        const frame = createAttachmentFrame({
+          name: existingFrame?.dataset.videoName || video.getAttribute('aria-label') || '视频',
+          type: video.dataset.editorType || existingFrame?.dataset.videoType || 'video/mp4',
+          size: Number(existingFrame?.dataset.videoSize || 0),
+          url,
+        });
+        (existingFrame || video).replaceWith(frame);
+        return;
+      }
+
+      video.controls = true;
+      video.preload = 'metadata';
+      video.draggable = false;
+      video.setAttribute('draggable', 'false');
+      const storedSrc = video.dataset.editorSrc || video.getAttribute('src') || '';
+      if (isStoredAssetUrl(storedSrc)) {
+        video.dataset.editorSrc = storedSrc;
+        if (!video.dataset.objectUrl || video.getAttribute('src') === storedSrc) {
+          resolveStoredAssetDataUrl(storedSrc)
+            .then((dataUrl) => {
+              if (!editorRef.current?.contains(video)) return;
+              if (video.dataset.objectUrl) {
+                URL.revokeObjectURL(video.dataset.objectUrl);
+                editorObjectUrlsRef.current.delete(video.dataset.objectUrl);
+              }
+              const objectUrl = dataUrlToBlobUrl(dataUrl, video.dataset.editorType || 'video/mp4');
+              editorObjectUrlsRef.current.add(objectUrl);
+              video.dataset.objectUrl = objectUrl;
+              video.src = objectUrl;
+            })
+            .catch((error) => {
+              console.warn('Failed to load stored video asset', error);
+              video.removeAttribute('src');
+            });
+        }
+      }
+      if (existingFrame) {
+        existingFrame.contentEditable = 'false';
+        existingFrame.draggable = false;
+        existingFrame.setAttribute('draggable', 'false');
+        return;
+      }
+
+      const frame = document.createElement('span');
+      frame.className = 'editorVideoFrame';
+      frame.contentEditable = 'false';
+      frame.draggable = false;
+      frame.setAttribute('draggable', 'false');
+      video.parentNode?.insertBefore(frame, video);
+      frame.appendChild(video);
+    });
   }
 
   function prepareEditorImages() {
@@ -2312,6 +2430,7 @@ function App() {
     // Strip style attributes from spans, but preserve editor frame elements
     container.querySelectorAll('span').forEach((el) => {
       if (el.classList.contains('editorImageFrame') ||
+          el.classList.contains('editorVideoFrame') ||
           el.classList.contains('editorAttachmentFrame') ||
           el.classList.contains('editorImageResizeHandle') ||
           el.classList.contains('editorImageDropMarker') ||
@@ -2589,6 +2708,10 @@ function App() {
     imageInputRef.current?.click();
   }
 
+  function addEditorVideo() {
+    videoInputRef.current?.click();
+  }
+
   function addEditorAttachment() {
     attachmentInputRef.current?.click();
   }
@@ -2611,6 +2734,9 @@ function App() {
       `<small>${escapeHtml(formatFileSize(size))}</small>`,
       '</span>',
     ].join('');
+    if (kind === 'video') {
+      frame.querySelector('.editorAttachmentIcon').textContent = 'Video';
+    }
     return frame;
   }
 
@@ -2688,6 +2814,115 @@ function App() {
     });
   }
 
+  function isVideoFile(file) {
+    return file.type.startsWith('video/') || /\.(mp4|webm|ogg|mov|m4v)$/i.test(file.name);
+  }
+
+  function insertEditorVideo(file, src, { sync = true } = {}) {
+    insertEditorAttachment(
+      {
+        name: file.name,
+        type: file.type || 'video/mp4',
+        size: file.size,
+      },
+      src,
+    );
+    if (sync) syncEditorContent();
+    return;
+
+    if (!editorRef.current) return;
+    const range = ensureEditorInsertionRange();
+    if (!range) return;
+    const selection = window.getSelection();
+
+    const frame = document.createElement('span');
+    frame.className = 'editorVideoFrame';
+    frame.contentEditable = 'false';
+    frame.draggable = false;
+    frame.setAttribute('draggable', 'false');
+    frame.dataset.videoName = file.name;
+    frame.dataset.videoType = file.type;
+    frame.dataset.videoSize = String(file.size);
+
+    const video = document.createElement('video');
+    video.controls = true;
+    video.preload = 'metadata';
+    video.dataset.editorSrc = src;
+    video.dataset.editorType = file.type || 'video/mp4';
+    video.setAttribute('aria-label', file.name || '上传视频');
+    video.draggable = false;
+    video.setAttribute('draggable', 'false');
+
+    if (isStoredAssetUrl(src)) {
+      resolveStoredAssetDataUrl(src)
+        .then((dataUrl) => {
+          if (!editorRef.current?.contains(video)) return;
+          const objectUrl = dataUrlToBlobUrl(dataUrl, file.type || 'video/mp4');
+          editorObjectUrlsRef.current.add(objectUrl);
+          video.dataset.objectUrl = objectUrl;
+          video.src = objectUrl;
+        })
+        .catch((error) => {
+          console.warn('Failed to load inserted video asset', error);
+        });
+    } else {
+      video.src = src;
+    }
+
+    const caption = document.createElement('span');
+    caption.className = 'editorVideoCaption';
+    caption.textContent = `${file.name || '上传视频'}${file.size ? ` · ${formatFileSize(file.size)}` : ''}`;
+
+    frame.appendChild(video);
+    frame.appendChild(caption);
+
+    range.deleteContents();
+    range.insertNode(frame);
+    range.setStartAfter(frame);
+    range.collapse(true);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    clearActiveEditorObjects();
+    frame.classList.add('active');
+    if (sync) syncEditorContent();
+    saveEditorSelection();
+  }
+
+  async function handleEditorVideoSelected(event) {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = '';
+    if (files.length === 0) return;
+
+    const MAX_TOTAL_VIDEO_SIZE = 300 * 1024 * 1024;
+    const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+    if (totalSize > MAX_TOTAL_VIDEO_SIZE) {
+      window.alert(`视频总大小（${formatFileSize(totalSize)}）超过上限 ${formatFileSize(MAX_TOTAL_VIDEO_SIZE)}，请分批上传`);
+      return;
+    }
+
+    for (const file of files) {
+      if (!isVideoFile(file)) continue;
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        const videoUrl = dataUrl
+          ? await saveDataUrlAsset({
+            dataUrl,
+            name: file.name,
+            type: file.type || 'video/mp4',
+            size: file.size,
+            kind: 'video',
+          })
+          : '';
+        if (videoUrl) insertEditorVideo(file, videoUrl, { sync: false });
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      } catch (error) {
+        console.error('Failed to insert video', file.name, error);
+        window.alert(`视频「${file.name}」读取失败，已跳过`);
+      }
+    }
+    syncEditorContent();
+  }
+
   async function handleEditorAttachmentSelected(event) {
     const files = Array.from(event.target.files ?? []);
     event.target.value = '';
@@ -2733,6 +2968,12 @@ function App() {
       const previewDataUrl = await resolveStoredAssetDataUrl(url);
       if (kind === 'pdf') {
         const previewUrl = dataUrlToBlobUrl(previewDataUrl, type || 'application/pdf');
+        setAttachmentPreview({ name, type, size, url: previewDataUrl, previewUrl, kind, status: 'ready' });
+        return;
+      }
+
+      if (kind === 'video') {
+        const previewUrl = dataUrlToBlobUrl(previewDataUrl, type || 'video/mp4');
         setAttachmentPreview({ name, type, size, url: previewDataUrl, previewUrl, kind, status: 'ready' });
         return;
       }
@@ -2884,6 +3125,10 @@ function App() {
     if (attachmentFrame && editorRef.current?.contains(attachmentFrame)) {
       clearActiveEditorObjects();
       attachmentFrame.classList.add('active');
+      if (getAttachmentKind(attachmentFrame.dataset.attachmentName ?? '', attachmentFrame.dataset.attachmentType ?? '') === 'video') {
+        event.preventDefault();
+        openEditorAttachmentPreview(attachmentFrame);
+      }
       return;
     }
 
@@ -2891,6 +3136,13 @@ function App() {
     if (imageFrame && editorRef.current?.contains(imageFrame)) {
       clearActiveEditorObjects();
       imageFrame.classList.add('active');
+      return;
+    }
+
+    const videoFrame = event.target.closest?.('.editorVideoFrame');
+    if (videoFrame && editorRef.current?.contains(videoFrame)) {
+      clearActiveEditorObjects();
+      videoFrame.classList.add('active');
       return;
     }
     clearActiveEditorObjects();
@@ -3146,7 +3398,7 @@ function App() {
     if (!editor) return;
 
     const el = document.elementFromPoint(event.clientX, event.clientY);
-    if (!el || !editor.contains(el) || el.closest?.('.editorImageFrame, .editorAttachmentFrame')) {
+    if (!el || !editor.contains(el) || el.closest?.('.editorImageFrame, .editorVideoFrame, .editorAttachmentFrame')) {
       return;
     }
 
@@ -3281,7 +3533,7 @@ function App() {
     const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, {
       acceptNode: (node) => {
         if (node.parentElement?.closest('a')) return NodeFilter.FILTER_REJECT;
-        if (node.parentElement?.closest('.editorImageFrame, .editorAttachmentFrame, .mergedWorkflowMeta')) return NodeFilter.FILTER_REJECT;
+        if (node.parentElement?.closest('.editorImageFrame, .editorVideoFrame, .editorAttachmentFrame, .mergedWorkflowMeta')) return NodeFilter.FILTER_REJECT;
         if (!URL_REGEX.test(node.textContent)) return NodeFilter.FILTER_REJECT;
         URL_REGEX.lastIndex = 0;
         return NodeFilter.FILTER_ACCEPT;
@@ -3430,11 +3682,14 @@ function App() {
     if (files.length === 0 || !editorRef.current) return;
 
     const imageFiles = [];
+    const videoFiles = [];
     const otherFiles = [];
 
     for (const file of files) {
       if (file.type.startsWith('image/')) {
         imageFiles.push(file);
+      } else if (isVideoFile(file)) {
+        videoFiles.push(file);
       } else {
         otherFiles.push(file);
       }
@@ -3456,6 +3711,24 @@ function App() {
         if (imageUrl) insertEditorImage(imageUrl, { sync: false });
       } catch (error) {
         console.error('Failed to drop image', file.name, error);
+      }
+    }
+
+    for (const file of videoFiles) {
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        const videoUrl = dataUrl
+          ? await saveDataUrlAsset({
+              dataUrl,
+              name: file.name,
+              type: file.type || 'video/mp4',
+              size: file.size,
+              kind: 'video',
+            })
+          : '';
+        if (videoUrl) insertEditorVideo(file, videoUrl, { sync: false });
+      } catch (error) {
+        console.error('Failed to drop video', file.name, error);
       }
     }
 
@@ -3497,7 +3770,7 @@ function App() {
 
     if (event.key !== 'Delete' && event.key !== 'Backspace') return;
 
-    const activeObject = editorRef.current?.querySelector('.editorImageFrame.active, .editorAttachmentFrame.active');
+    const activeObject = editorRef.current?.querySelector('.editorImageFrame.active, .editorVideoFrame.active, .editorAttachmentFrame.active');
     if (!activeObject) return;
 
     event.preventDefault();
@@ -3834,6 +4107,9 @@ function App() {
                   <button type="button" className="toolbarIconButton" onMouseDown={(event) => event.preventDefault()} onClick={addEditorImage} title="插入图片">
                     <Image size={16} />
                   </button>
+                  <button type="button" className="toolbarIconButton" onMouseDown={(event) => event.preventDefault()} onClick={addEditorVideo} title="上传视频">
+                    <Video size={16} />
+                  </button>
                   <button type="button" className="toolbarIconButton" onMouseDown={(event) => event.preventDefault()} onClick={addEditorAttachment} title="上传附件">
                     <FileText size={16} />
                   </button>
@@ -3853,6 +4129,14 @@ function App() {
                     multiple
                     hidden
                     onChange={handleEditorImageSelected}
+                  />
+                  <input
+                    ref={videoInputRef}
+                    type="file"
+                    accept={EDITOR_VIDEO_ACCEPT}
+                    multiple
+                    hidden
+                    onChange={handleEditorVideoSelected}
                   />
                   <input
                     ref={attachmentInputRef}
@@ -4938,6 +5222,11 @@ function AttachmentPreviewDialog({ preview, onClose }) {
           {preview.status === 'unsupported' && <div className="attachmentPreviewEmpty">当前格式暂不支持网页预览，请下载后查看。</div>}
           {preview.status === 'ready' && preview.kind === 'pdf' && (
             <iframe src={preview.previewUrl || preview.url} title={preview.name} />
+          )}
+          {preview.status === 'ready' && preview.kind === 'video' && (
+            <div className="attachmentVideoPreview">
+              <video src={preview.previewUrl || preview.url} controls autoPlay />
+            </div>
           )}
           {preview.status === 'ready' && preview.kind === 'word' && (
             <div className="attachmentWordPreview" ref={wordPreviewRef} />
