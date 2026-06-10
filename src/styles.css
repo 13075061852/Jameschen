@@ -701,7 +701,7 @@ button {
 .gradeTabs {
   padding: 0 14px 12px;
   display: grid;
-  grid-template-columns: minmax(48px, 1.2fr) repeat(4, minmax(40px, 1fr));
+  grid-template-columns: minmax(48px, 1.2fr) repeat(4, minmax(40px, 1fr)) minmax(52px, 0.8fr);
   gap: 8px;
 }
 
@@ -724,6 +724,127 @@ button {
   border-color: transparent;
   background: linear-gradient(180deg, #202020, #000000);
   box-shadow: none;
+}
+
+.batchToggleButton {
+  font-size: 11px;
+}
+
+.batchToggleButton.active {
+  color: #b74646;
+  border-color: rgba(183, 70, 70, 0.28);
+  background: rgba(255, 245, 245, 0.78);
+}
+
+.batchToolbar {
+  margin: 0 14px 8px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-radius: 8px;
+  background: rgba(183, 70, 70, 0.06);
+  border: 1px solid rgba(183, 70, 70, 0.14);
+}
+
+.batchToolbar span {
+  font-size: 12px;
+  font-weight: 700;
+  color: #b74646;
+}
+
+.batchDeleteButton {
+  height: 28px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 7px;
+  color: #ffffff;
+  background: #b74646;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.batchDeleteButton:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.batchDeleteButton:not(:disabled):hover {
+  background: #a13838;
+}
+
+.batchCheckbox {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border: 2px solid rgba(0, 0, 0, 0.2);
+  border-radius: 5px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.batchCheckbox.checked {
+  border-color: #0b8a8d;
+  background: #0b8a8d;
+}
+
+.batchCheckmark {
+  width: 6px;
+  height: 10px;
+  border: solid #ffffff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+  margin-top: -2px;
+}
+
+.customerRow.batchSelectable {
+  cursor: pointer;
+  gap: 10px;
+  padding-left: 12px;
+}
+
+.customerRow.batchSelected {
+  background: rgba(11, 138, 141, 0.06);
+}
+
+.pinButton {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #999999;
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 100ms;
+}
+
+.customerRow:hover .pinButton,
+.customerRow:focus-within .pinButton,
+.pinButton.isPinned {
+  opacity: 1;
+}
+
+.pinButton.isPinned {
+  color: #0b8a8d;
+}
+
+.pinButton:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.customerRow.pinned {
+  border-left: 3px solid #0b8a8d;
+  padding-left: 7px;
 }
 
 .customerList {

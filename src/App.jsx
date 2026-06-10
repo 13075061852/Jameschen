@@ -83,7 +83,7 @@ const DEFAULT_LEFT_PANEL_WIDTH = 360;
 const DEFAULT_RIGHT_PANEL_WIDTH = 540;
 const COLLAPSED_PANEL_WIDTH = 48;
 const RESIZER_WIDTH = 10;
-const MIN_LEFT_PANEL_WIDTH = 260;
+const MIN_LEFT_PANEL_WIDTH = 330;
 const MIN_RIGHT_PANEL_WIDTH = 420;
 const MIN_CENTER_PANEL_WIDTH = 360;
 const LOCAL_STORAGE_SAFE_CUSTOMER_SIZE = 1_500_000;
@@ -735,6 +735,8 @@ function App() {
   const [editingWorkflowTitleId, setEditingWorkflowTitleId] = useState('');
   const [archiveEditing, setArchiveEditing] = useState(false);
   const [archiveDraft, setArchiveDraft] = useState(null);
+  const [batchMode, setBatchMode] = useState(false);
+  const [batchSelectedIds, setBatchSelectedIds] = useState(new Set());
   const [leftCollapsed, setLeftCollapsed] = useState(initialLayout.leftCollapsed);
   const [rightCollapsed, setRightCollapsed] = useState(initialLayout.rightCollapsed);
   const [leftPanelWidth, setLeftPanelWidth] = useState(initialLayout.leftPanelWidth);
@@ -835,7 +837,8 @@ function App() {
       .filter((customer) => {
         const haystack = `${customer.company} ${customer.contact} ${customer.country} ${customer.email}`.toLowerCase();
         return haystack.includes(query.trim().toLowerCase()) && (gradeFilter === '全部' || customer.grade === gradeFilter);
-      });
+      })
+      .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
   }, [customers, gradeFilter, query]);
   const visibleCustomers = useMemo(() => (
     filteredCustomers.slice(0, customerRenderLimit)
@@ -873,6 +876,7 @@ function App() {
 
   useEffect(() => {
     setCustomerRenderLimit(INITIAL_CUSTOMER_RENDER_LIMIT);
+    exitBatchMode();
   }, [gradeFilter, query]);
 
   useEffect(() => {
@@ -1426,22 +1430,14 @@ function App() {
   function reorderCustomers(activeId, overId) {
     if (!overId || activeId === overId) return;
 
-    const visibleIds = visibleCustomers.map((customer) => customer.id);
-    const oldIndex = visibleIds.indexOf(activeId);
-    const newIndex = visibleIds.indexOf(overId);
+    const currentCustomers = customersRef.current;
+    const oldIndex = currentCustomers.findIndex((c) => c.id === activeId);
+    const newIndex = currentCustomers.findIndex((c) => c.id === overId);
 
-    if (oldIndex === -1 || newIndex === -1) return;
+    if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) return;
 
-    const visibleIdSet = new Set(visibleIds);
-    const visibleCustomers = customers.filter((customer) => visibleIdSet.has(customer.id));
-    const reorderedVisibleCustomers = arrayMove(visibleCustomers, oldIndex, newIndex);
-    let visibleCursor = 0;
-
-    commitCustomers(customers.map((customer) => (
-      visibleIdSet.has(customer.id)
-        ? reorderedVisibleCustomers[visibleCursor++]
-        : customer
-    )));
+    const reordered = arrayMove(currentCustomers, oldIndex, newIndex);
+    commitCustomers(reordered);
   }
 
   function handleCustomerDragEnd(event) {
@@ -1633,6 +1629,60 @@ function App() {
       setArchiveEditing(false);
       setArchiveDraft(null);
     }
+  }
+
+  function togglePinCustomer(customerId) {
+    commitCustomersFromUpdater((currentCustomers) =>
+      currentCustomers.map((c) =>
+        c.id === customerId ? { ...c, pinned: !c.pinned } : c
+      )
+    );
+  }
+
+  function enterBatchMode() {
+    setBatchMode(true);
+    setBatchSelectedIds(new Set());
+  }
+
+  function exitBatchMode() {
+    setBatchMode(false);
+    setBatchSelectedIds(new Set());
+  }
+
+  function toggleBatchSelectCustomer(customerId) {
+    setBatchSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(customerId)) {
+        next.delete(customerId);
+      } else {
+        next.add(customerId);
+      }
+      return next;
+    });
+  }
+
+  function requestBatchDelete() {
+    if (batchSelectedIds.size === 0) return;
+    setPendingDelete({
+      type: 'batch',
+      ids: [...batchSelectedIds],
+      title: '批量删除用户',
+      message: `确定删除选中的 ${batchSelectedIds.size} 位用户吗？删除后无法恢复。`,
+    });
+  }
+
+  function performBatchDelete(ids) {
+    const idSet = new Set(ids);
+    const nextCustomers = customers.filter((c) => !idSet.has(c.id));
+    commitCustomers(nextCustomers);
+    if (idSet.has(selectedId)) {
+      const nextCustomer = nextCustomers[0];
+      setSelectedId(nextCustomer?.id ?? '');
+      setSelectedWorkflowId('');
+      setArchiveEditing(false);
+      setArchiveDraft(null);
+    }
+    exitBatchMode();
   }
 
   function toggleLeftCollapsed() {
@@ -3432,6 +3482,9 @@ function App() {
     if (pendingDelete.type === 'customer') {
       performDeleteCustomer(pendingDelete.id);
     }
+    if (pendingDelete.type === 'batch') {
+      performBatchDelete(pendingDelete.ids);
+    }
     if (pendingDelete.type === 'workflow') {
       performDeleteWorkflow(pendingDelete.id);
     }
@@ -3513,7 +3566,27 @@ function App() {
                 {grade}
               </button>
             ))}
+            <button
+              className={`batchToggleButton ${batchMode ? 'active' : ''}`}
+              onClick={batchMode ? exitBatchMode : enterBatchMode}
+              title={batchMode ? '退出批量模式' : '批量管理用户'}
+            >
+              {batchMode ? '取消' : '批量'}
+            </button>
           </div>
+          {batchMode && (
+            <div className="batchToolbar">
+              <span>已选 {batchSelectedIds.size} 位用户</span>
+              <button
+                className="batchDeleteButton"
+                disabled={batchSelectedIds.size === 0}
+                onClick={requestBatchDelete}
+              >
+                <Trash2 size={14} />
+                批量删除
+              </button>
+            </div>
+          )}
           <DndContext
             sensors={dragSensors}
             collisionDetection={closestCenter}
@@ -3528,6 +3601,10 @@ function App() {
                     isSelected={selectedCustomer?.id === customer.id}
                     onSelect={selectCustomer}
                     onDelete={requestDeleteCustomer}
+                    batchMode={batchMode}
+                    isBatchSelected={batchSelectedIds.has(customer.id)}
+                    onToggleBatchSelect={toggleBatchSelectCustomer}
+                    onTogglePin={togglePinCustomer}
                   />
                 ))}
                 {hasMoreCustomers && (
@@ -4362,7 +4439,7 @@ function CollapsedCustomerRail({ customers, selectedId, onSelect }) {
   );
 }
 
-function SortableCustomerRow({ customer, isSelected, onSelect, onDelete }) {
+function SortableCustomerRow({ customer, isSelected, onSelect, onDelete, batchMode, isBatchSelected, onToggleBatchSelect, onTogglePin }) {
   const {
     attributes,
     listeners,
@@ -4371,7 +4448,7 @@ function SortableCustomerRow({ customer, isSelected, onSelect, onDelete }) {
     transition,
     isDragging,
     isSorting,
-  } = useSortable({ id: customer.id });
+  } = useSortable({ id: customer.id, disabled: batchMode });
 
   return (
     <div
@@ -4390,6 +4467,10 @@ function SortableCustomerRow({ customer, isSelected, onSelect, onDelete }) {
         className={isDragging ? 'dragging' : isSorting ? 'sorting' : ''}
         dragAttributes={attributes}
         dragListeners={listeners}
+        batchMode={batchMode}
+        isBatchSelected={isBatchSelected}
+        onToggleBatchSelect={onToggleBatchSelect}
+        onTogglePin={onTogglePin}
       />
     </div>
   );
@@ -4405,30 +4486,72 @@ function CustomerRowCard({
   dragListeners,
   dragging = false,
   overlay = false,
+  batchMode = false,
+  isBatchSelected = false,
+  onToggleBatchSelect,
+  onTogglePin,
 }) {
+  const handleClick = (event) => {
+    if (batchMode) {
+      onToggleBatchSelect(customer.id);
+      return;
+    }
+    onSelect(customer.id);
+  };
+
   return (
     <div
-      className={`customerRow ${isSelected ? 'selected' : ''} ${dragging ? 'dragging' : ''} ${overlay ? 'overlay' : ''} ${className}`.trim()}
-      onClick={() => onSelect(customer.id)}
+      className={`customerRow ${isSelected ? 'selected' : ''} ${dragging ? 'dragging' : ''} ${overlay ? 'overlay' : ''} ${customer.pinned ? 'pinned' : ''} ${isBatchSelected ? 'batchSelected' : ''} ${batchMode ? 'batchSelectable' : ''} ${className}`.trim()}
+      onClick={handleClick}
       onKeyDown={(event) => {
         if (event.key === 'Delete' || event.key === 'Backspace') {
           event.preventDefault();
           onDelete(customer);
           return;
         }
-        if (event.key === 'Enter' || event.key === ' ') onSelect(customer.id);
+        if (event.key === 'Enter' || event.key === ' ') {
+          if (batchMode) {
+            onToggleBatchSelect(customer.id);
+          } else {
+            onSelect(customer.id);
+          }
+        }
       }}
       role="button"
       tabIndex={0}
-      {...dragAttributes}
-      {...dragListeners}
+      {...(batchMode ? {} : dragAttributes)}
+      {...(batchMode ? {} : dragListeners)}
     >
+      {batchMode && (
+        <div
+          className={`batchCheckbox ${isBatchSelected ? 'checked' : ''}`}
+          onClick={(e) => { e.stopPropagation(); onToggleBatchSelect(customer.id); }}
+        >
+          {isBatchSelected && <span className="batchCheckmark" />}
+        </div>
+      )}
       <BrandLogo company={customer.company} />
       <div className="customerText">
         <strong>{customer.company || '未命名公司'}</strong>
         <span>{customer.country || '未知国家'}</span>
       </div>
       <div className="customerBadges">
+        <button
+          type="button"
+          className={`pinButton ${customer.pinned ? 'isPinned' : ''}`}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            onTogglePin(customer.id);
+          }}
+          title={customer.pinned ? '取消置顶' : '置顶'}
+          aria-label={customer.pinned ? '取消置顶' : '置顶'}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill={customer.pinned ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="12" y1="17" x2="12" y2="22" />
+            <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
+          </svg>
+        </button>
         <button
           type="button"
           className="customerDeleteButton"
