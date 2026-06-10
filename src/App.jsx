@@ -3384,6 +3384,68 @@ function App() {
     setTimeout(() => linkifyAllEditorContent(), 0);
   }
 
+  function handleEditorDragOver(event) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+  }
+
+  async function handleEditorDrop(event) {
+    event.preventDefault();
+    const files = Array.from(event.dataTransfer?.files ?? []);
+    if (files.length === 0 || !editorRef.current) return;
+
+    const imageFiles = [];
+    const otherFiles = [];
+
+    for (const file of files) {
+      if (file.type.startsWith('image/')) {
+        imageFiles.push(file);
+      } else {
+        otherFiles.push(file);
+      }
+    }
+
+    // Process images
+    for (const file of imageFiles) {
+      try {
+        const imageDataUrl = await readImageAsResizedDataUrl(file);
+        const imageUrl = imageDataUrl
+          ? await saveDataUrlAsset({
+              dataUrl: imageDataUrl,
+              name: file.name,
+              type: 'image/jpeg',
+              size: imageDataUrl.length,
+              kind: 'image',
+            })
+          : '';
+        if (imageUrl) insertEditorImage(imageUrl, { sync: false });
+      } catch (error) {
+        console.error('Failed to drop image', file.name, error);
+      }
+    }
+
+    // Process attachments (Excel, Word, PDF, etc.)
+    for (const file of otherFiles) {
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        const url = dataUrl
+          ? await saveDataUrlAsset({
+              dataUrl,
+              name: file.name,
+              type: file.type,
+              size: file.size,
+              kind: getAttachmentKind(file.name, file.type),
+            })
+          : '';
+        if (url) insertEditorAttachment(file, url);
+      } catch (error) {
+        console.error('Failed to drop attachment', file.name, error);
+      }
+    }
+
+    syncEditorContent();
+  }
+
   function handleEditorKeyDown(event) {
     // Escape cancels format painter
     if (event.key === 'Escape' && formatPainterRef.current) {
@@ -3755,6 +3817,8 @@ function App() {
                   onInput={syncEditorContentDebounced}
                   onBlur={flushEditorContentSync}
                   onPaste={handleEditorPaste}
+                  onDragOver={handleEditorDragOver}
+                  onDrop={handleEditorDrop}
                   onMouseDown={handleEditorMouseDown}
                   onMouseUp={saveEditorSelection}
                   onMouseMove={handleEditorMouseMove}
