@@ -1705,19 +1705,7 @@ function App() {
       }
     });
 
-    container.querySelectorAll('.editorVideoFrame').forEach((frame) => {
-      const video = frame.querySelector('video');
-      if (video) {
-        video.controls = true;
-        video.style.maxWidth = '100%';
-        video.style.display = 'block';
-        video.style.margin = '8px 0';
-        video.style.borderRadius = '6px';
-        frame.replaceWith(video);
-      } else {
-        frame.remove();
-      }
-    });
+    container.querySelectorAll('.editorVideoFrame, video').forEach((element) => element.remove());
 
     container.querySelectorAll('.editorAttachmentFrame').forEach((frame) => {
       const name = frame.dataset.attachmentName || '附件';
@@ -1725,13 +1713,17 @@ function App() {
       const size = Number(frame.dataset.attachmentSize || 0);
       const url = frame.dataset.attachmentUrl || '';
       const kind = getAttachmentKind(name, type);
+      if (kind === 'video') {
+        frame.remove();
+        return;
+      }
       const link = document.createElement(url ? 'a' : 'span');
       link.className = 'exportAttachmentLink';
       if (url) {
         link.setAttribute('href', url);
         link.setAttribute('download', name);
       }
-      link.textContent = `${kind === 'video' ? 'Video' : 'Attachment'}: ${name}${size ? ` (${formatFileSize(size)})` : ''}`;
+      link.textContent = `Attachment: ${name}${size ? ` (${formatFileSize(size)})` : ''}`;
       link.style.display = 'inline-block';
       link.style.margin = '6px 0';
       link.style.padding = '8px 10px';
