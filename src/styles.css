@@ -2123,17 +2123,17 @@ button {
 }
 
 .archiveDeleteWorkflowButton {
-  height: 30px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
   gap: 5px;
   padding: 0 9px;
   border: 1px solid rgba(213, 88, 88, 0.34);
-  border-radius: 8px;
+  border-radius: 7px;
   color: #b74646;
   background: rgba(255, 245, 245, 0.82);
-  font-size: 13px;
-  font-weight: 780;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .archiveDeleteWorkflowButton:disabled {
@@ -2277,31 +2277,20 @@ button {
   font-weight: 850;
 }
 
-.workflowViewSwitch {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px;
-  border-radius: 999px;
-  background: rgba(14, 165, 164, 0.12);
-}
-
-.workflowViewSwitch button {
+.workflowViewToggle {
   height: 28px;
   padding: 0 12px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: #5d6b76;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #555555;
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
-  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
 }
 
-.workflowViewSwitch button.active {
-  background: #ffffff;
-  color: #0b8a8d;
-  box-shadow: 0 1px 6px rgba(11, 138, 141, 0.16);
+.workflowViewToggle:hover {
+  background: rgba(0, 0, 0, 0.05);
 }
 
 .archiveTimeline {
@@ -2329,10 +2318,6 @@ button {
   align-items: stretch;
   border-bottom: 1px solid rgba(0, 0, 0, 0.08);
   cursor: pointer;
-}
-
-.archiveTimelineRow:last-child {
-  border-bottom: 0;
 }
 
 .archiveTimelineRow:last-child .timelineRail::after {

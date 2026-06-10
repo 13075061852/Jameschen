@@ -787,19 +787,12 @@ function App() {
   const archiveCustomer = archiveEditing && archiveDraft?.id === selectedCustomer?.id
     ? archiveDraft
     : selectedCustomer;
-  const selectedCustomerTimeline = useMemo(
-    () => selectedCustomer?.timeline ?? [],
-    [selectedCustomer?.id, selectedCustomer?.timeline]
-  );
+  const selectedCustomerTimeline = selectedCustomer?.timeline ?? [];
   const sortedTimeline = useMemo(() => {
-    if (!selectedCustomerTimeline.length) return [];
-    return [...selectedCustomerTimeline].sort((a, b) => {
-      const dateA = a.date || '';
-      const dateB = b.date || '';
-      return workflowSortOrder === 'asc'
-        ? dateA.localeCompare(dateB)
-        : dateB.localeCompare(dateA);
-    });
+    if (workflowSortOrder === 'asc') {
+      return [...selectedCustomerTimeline].reverse();
+    }
+    return selectedCustomerTimeline;
   }, [selectedCustomerTimeline, workflowSortOrder]);
   const focusedWorkflow = selectedCustomer?.timeline?.find((item) => item.id === selectedWorkflowId) ?? null;
   const selectedWorkflow = focusedWorkflow
@@ -3949,32 +3942,29 @@ function App() {
                   <div className="archiveWorkflowHeader">
                     <div className="archiveWorkflowHeading">
                       <h3>最近工作流</h3>
-                      <div className="workflowViewSwitch" role="tablist" aria-label="工作流查看模式">
-                        <button
-                          type="button"
-                          className={workflowViewMode === 'single' ? 'active' : ''}
-                          onClick={() => changeWorkflowViewMode('single')}
-                        >
-                          单独查看
-                        </button>
-                        <button
-                          type="button"
-                          className={workflowViewMode === 'merged' ? 'active' : ''}
-                          onClick={() => changeWorkflowViewMode('merged')}
-                        >
-                          合并查看
-                        </button>
-                      </div>
                     </div>
                     <div className="archiveWorkflowActions">
                       <button
+                        type="button"
+                        className="workflowViewToggle"
+                        onClick={toggleMergeView}
+                        title={workflowViewMode === 'single' ? '当前：单独查看，点击切换合并' : '当前：合并查看，点击切换单独'}
+                      >
+                        {workflowViewMode === 'single' ? '单独查看' : '合并查看'}
+                      </button>
+                      <button
+                        type="button"
                         className="workflowSortToggle"
-                        onClick={() => setWorkflowSortOrder((o) => (o === 'desc' ? 'asc' : 'desc'))}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setWorkflowSortOrder((o) => (o === 'desc' ? 'asc' : 'desc'));
+                        }}
                         title={workflowSortOrder === 'desc' ? '当前：最新在前，点击切换' : '当前：最早在前，点击切换'}
                       >
                         {workflowSortOrder === 'desc' ? '正序' : '反序'}
                       </button>
                       <button
+                        type="button"
                         className="archiveDeleteWorkflowButton"
                         onClick={() => activeWorkflowForActions && deleteWorkflow(activeWorkflowForActions.id)}
                         disabled={!activeWorkflowForActions}
