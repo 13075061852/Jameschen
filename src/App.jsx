@@ -3576,6 +3576,20 @@ function App() {
           </div>
           {batchMode && (
             <div className="batchToolbar">
+              <button
+                className="batchSelectAllButton"
+                onClick={() => {
+                  const visibleIds = visibleCustomers.map((c) => c.id);
+                  const allSelected = visibleIds.every((id) => batchSelectedIds.has(id));
+                  if (allSelected) {
+                    setBatchSelectedIds(new Set());
+                  } else {
+                    setBatchSelectedIds(new Set(visibleIds));
+                  }
+                }}
+              >
+                {visibleCustomers.every((c) => batchSelectedIds.has(c.id)) ? '取消全选' : '全选'}
+              </button>
               <span>已选 {batchSelectedIds.size} 位用户</span>
               <button
                 className="batchDeleteButton"
