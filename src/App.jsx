@@ -61,6 +61,18 @@ const GLOBAL_FIELD_LABELS_STORAGE_KEY = 'personal-workflow-manager-global-field-
 const BACKUP_VERSION = 1;
 const CUSTOMER_GRADES = ['A', 'B', 'C', 'D'];
 const EDITOR_FONT_SIZES = ['12px', '14px', '16px', '18px', '22px', '28px', '36px'];
+const EDITOR_FONTS = [
+  { label: 'Calibri', value: 'Calibri, "Open Sans", sans-serif' },
+  { label: 'Arial', value: 'Arial, sans-serif' },
+  { label: 'Times New Roman', value: '"Times New Roman", serif' },
+  { label: 'Georgia', value: 'Georgia, serif' },
+  { label: 'Verdana', value: 'Verdana, sans-serif' },
+  { label: 'Courier New', value: '"Courier New", monospace' },
+  { label: '微软雅黑', value: '"Microsoft YaHei", sans-serif' },
+  { label: '苹方', value: '"PingFang SC", sans-serif' },
+  { label: '宋体', value: 'SimSun, serif' },
+];
+const DEFAULT_EDITOR_FONT = EDITOR_FONTS[0]; // Calibri
 const EDITOR_TEXT_COLORS = ['#111111', '#dc2626', '#2563eb', '#16a34a', '#ca8a04', '#7c3aed'];
 const EDITOR_BACKGROUND_COLORS = ['#fff7ad', '#fee2e2', '#dbeafe', '#dcfce7', '#f3e8ff', '#ffffff'];
 const DEFAULT_EDITOR_TEXT_COLOR = EDITOR_TEXT_COLORS[0];
@@ -739,6 +751,7 @@ function App() {
   const [mentionSourceHtml, setMentionSourceHtml] = useState('');
   const [contextMenu, setContextMenu] = useState(null);
   const [activeEditorFontSize, setActiveEditorFontSize] = useState('');
+  const [activeEditorFontFamily, setActiveEditorFontFamily] = useState('');
   const [activeEditorTextColor, setActiveEditorTextColor] = useState(DEFAULT_EDITOR_TEXT_COLOR);
   const [activeEditorBackgroundColor, setActiveEditorBackgroundColor] = useState(DEFAULT_EDITOR_BACKGROUND_COLOR);
   const [editorHydrationVersion, setEditorHydrationVersion] = useState(0);
@@ -814,7 +827,7 @@ function App() {
   const canEditEditor = Boolean(selectedCustomer) && (!isMergedWorkflowView || mergedWorkflows.length > 0);
   const editorWordCount = useMemo(() => getTextLengthFromHtml(editorContent), [editorContent]);
   const selectedCustomerTitle = selectedCustomer
-    ? (selectedCustomer.displayTitle || [selectedCustomer.company || '未命名用户', selectedCustomer.contact, selectedCustomer.country].filter(Boolean).join(' · '))
+    ? (selectedCustomer.displayTitle || [selectedCustomer.company || '未命名用户', selectedCustomer.country].filter(Boolean).join(' · '))
     : '未命名用户';
 
   const filteredCustomers = useMemo(() => {
@@ -2083,9 +2096,12 @@ function App() {
     const element = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
       ? range.commonAncestorContainer
       : range.commonAncestorContainer.parentElement;
-    const fontSize = element ? window.getComputedStyle(element).fontSize : '';
-    if (fontSize) {
-      setActiveEditorFontSize(fontSize);
+    const computed = element ? window.getComputedStyle(element) : null;
+    if (computed?.fontSize) {
+      setActiveEditorFontSize(computed.fontSize);
+    }
+    if (computed?.fontFamily) {
+      setActiveEditorFontFamily(computed.fontFamily);
     }
 
     // Format painter: if active and new non-empty selection, apply & deactivate
@@ -3581,6 +3597,14 @@ function App() {
                       applyEditorStyle({ fontSize });
                     }}
                   />
+                  <EditorFontPicker
+                    fonts={EDITOR_FONTS}
+                    currentFont={activeEditorFontFamily}
+                    onPick={(fontFamily) => {
+                      setActiveEditorFontFamily(fontFamily);
+                      applyEditorStyle({ fontFamily });
+                    }}
+                  />
                   <EditorColorPicker
                     label="文字颜色"
                     trigger={<Type size={15} strokeWidth={2.2} />}
@@ -4162,6 +4186,37 @@ function PanelTitle({ title, icon, meta, action, collapsed = false, onToggle, to
   );
 }
 
+function EditorFontPicker({ fonts, currentFont, onPick }) {
+  const activeFont = fonts.find((f) => f.value === currentFont);
+  return (
+    <div className="toolbarFontPicker" title="设置字体">
+      <button
+        type="button"
+        className="toolbarFontTrigger"
+        onMouseDown={(event) => event.preventDefault()}
+        aria-label="设置字体"
+      >
+        <span>{activeFont?.label || '字体'}</span>
+        <ChevronDown size={10} />
+      </button>
+      <div className="toolbarFontPopover" role="menu" aria-label="设置字体">
+        {fonts.map((font) => (
+          <button
+            key={font.label}
+            type="button"
+            className="toolbarFontOption"
+            style={{ fontFamily: font.value }}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => onPick(font.value)}
+          >
+            {font.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function EditorColorPicker({ label, trigger, colors, currentColor, swatchClassName, onPick }) {
   return (
     <div className="toolbarColorPicker" title={label}>
@@ -4266,7 +4321,7 @@ function CollapsedCustomerRail({ customers, selectedId, onSelect }) {
             key={customer.id}
             className={`collapsedCustomerButton ${customer.id === selectedId ? 'active' : ''}`}
             onClick={() => onSelect(customer.id)}
-            title={`${customer.company || '未命名客户'} · ${customer.contact || '未填写联系人'}`}
+            title={`${customer.company || '未命名客户'} · ${customer.country || '未知国家'}`}
           >
             <BrandLogo company={customer.company} />
           </button>
@@ -4341,7 +4396,7 @@ function CustomerRowCard({
       <BrandLogo company={customer.company} />
       <div className="customerText">
         <strong>{customer.company || '未命名公司'}</strong>
-        <span>{customer.contact || '未填写联系人'} · {customer.country || '未知国家'}</span>
+        <span>{customer.country || '未知国家'}</span>
       </div>
       <div className="customerBadges">
         <button

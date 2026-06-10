@@ -1193,6 +1193,93 @@ button {
   background: rgba(0, 0, 0, 0.07);
 }
 
+.toolbarFontPicker {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.toolbarFontPicker::after {
+  content: "";
+  position: absolute;
+  left: -8px;
+  right: -8px;
+  top: 100%;
+  height: 12px;
+}
+
+.toolbarFontTrigger {
+  height: 24px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 7px;
+  color: #333333;
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  font-weight: 760;
+  outline: 0;
+  cursor: default;
+}
+
+.toolbarFontTrigger span {
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  background: none;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.toolbarFontTrigger svg {
+  flex-shrink: 0;
+}
+
+.toolbarFontPopover {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 4px);
+  transform: translateX(-50%) translateY(-3px);
+  width: max-content;
+  padding: 8px 10px;
+  display: grid;
+  gap: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, transform 120ms ease;
+  z-index: 20;
+}
+
+.toolbarFontPicker:hover .toolbarFontPopover,
+.toolbarFontPicker:focus-within .toolbarFontPopover {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+
+.toolbarFontOption {
+  min-height: 30px;
+  padding: 2px 10px;
+  border: 0;
+  border-radius: 6px;
+  color: #222222;
+  background: transparent;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.toolbarFontOption:hover {
+  background: rgba(0, 0, 0, 0.07);
+}
+
 .toolbarSwatch {
   position: relative;
   width: 17px;
@@ -1331,6 +1418,7 @@ button {
   color: #222222;
   line-height: 1.65;
   font-size: 14px;
+  font-family: Calibri, "Open Sans", sans-serif;
   background: transparent;
   white-space: pre-wrap;
   word-break: break-word;
