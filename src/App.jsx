@@ -133,7 +133,7 @@ function readInitialCustomers() {
       timeline: (customer.timeline ?? []).map((item, index) => ({
         ...item,
         title: item.title ?? '沟通记录',
-        documentContent: item.documentContent ?? (index === 0 ? customer.messyNotes || item.content : item.content),
+        documentContent: stripTransientObjectUrlsFromEditorHtml(item.documentContent ?? (index === 0 ? customer.messyNotes || item.content : item.content)),
       })),
     }));
   } catch {
@@ -143,10 +143,56 @@ function readInitialCustomers() {
       timeline: (customer.timeline ?? []).map((item, index) => ({
         ...item,
         title: item.title ?? '沟通记录',
-        documentContent: item.documentContent ?? (index === 0 ? customer.messyNotes || item.content : item.content),
+        documentContent: stripTransientObjectUrlsFromEditorHtml(item.documentContent ?? (index === 0 ? customer.messyNotes || item.content : item.content)),
       })),
     }));
   }
+}
+
+function normalizeEditorMediaSourcesInElement(container) {
+  container.querySelectorAll('img[src], img[data-editor-src], video[src], video[data-editor-src]').forEach((element) => {
+    const editorSrc = element.getAttribute('data-editor-src') || '';
+    const src = element.getAttribute('src') || '';
+    const persistentSrc = editorSrc && !editorSrc.startsWith('blob:') ? editorSrc : '';
+
+    if (isStoredAssetUrl(persistentSrc)) {
+      element.removeAttribute('src');
+      element.setAttribute('data-editor-src', persistentSrc);
+    } else if (persistentSrc) {
+      element.setAttribute('src', persistentSrc);
+      element.setAttribute('data-editor-src', persistentSrc);
+    } else if (src.startsWith('blob:')) {
+      element.removeAttribute('src');
+      element.removeAttribute('data-editor-src');
+    }
+
+    element.removeAttribute('data-object-url');
+  });
+}
+
+function stripTransientObjectUrlsFromEditorHtml(content) {
+  if (!content) return content;
+  if (typeof document === 'undefined') {
+    return content
+      .replace(/\sdata-object-url=(["'])[\s\S]*?\1/g, '')
+      .replace(/\ssrc=(["'])blob:[\s\S]*?\1/g, '')
+      .replace(/\sdata-editor-src=(["'])blob:[\s\S]*?\1/g, '');
+  }
+
+  const container = document.createElement('div');
+  container.innerHTML = toEditorHtml(content);
+  normalizeEditorMediaSourcesInElement(container);
+  return container.innerHTML;
+}
+
+function stripTransientObjectUrlsFromCustomers(customers) {
+  return customers.map((customer) => ({
+    ...customer,
+    timeline: (customer.timeline ?? []).map((item) => ({
+      ...item,
+      documentContent: stripTransientObjectUrlsFromEditorHtml(item.documentContent ?? item.content ?? ''),
+    })),
+  }));
 }
 
 function stripAttachmentDataForLocalStorage(customers) {
@@ -183,22 +229,23 @@ function stripAttachmentDataForLocalStorage(customers) {
 
 function saveCustomers(customers) {
   if (!Array.isArray(customers)) return;
+  const customersForStorage = stripTransientObjectUrlsFromCustomers(customers);
 
   // Primary: save to IndexedDB (async, handles large data)
-  saveCustomersToIndexedDb(customers).catch((error) => {
+  saveCustomersToIndexedDb(customersForStorage).catch((error) => {
     console.error('Failed to save customers to IndexedDB — data may be lost on reload', error);
   });
 
   // Fallback: save to localStorage for faster cold-start reads.
   // If data is too large, we still keep IndexedDB as the primary store.
   try {
-    const serializedCustomers = JSON.stringify(customers);
+    const serializedCustomers = JSON.stringify(customersForStorage);
     if (serializedCustomers.length <= LOCAL_STORAGE_SAFE_CUSTOMER_SIZE) {
       localStorage.setItem(STORAGE_KEY, serializedCustomers);
       return;
     }
     // Data too large for full save — try stripped version as emergency fallback
-    const stripped = stripAttachmentDataForLocalStorage(customers);
+    const stripped = stripAttachmentDataForLocalStorage(customersForStorage);
     const serializedStripped = JSON.stringify(stripped);
     if (serializedStripped.length <= LOCAL_STORAGE_SAFE_CUSTOMER_SIZE) {
       localStorage.setItem(STORAGE_KEY, serializedStripped);
@@ -644,13 +691,13 @@ function toEditorHtml(value = '') {
 function getTextLengthFromHtml(value = '') {
   const container = document.createElement('div');
   container.innerHTML = toEditorHtml(value);
-  return container.textContent?.length ?? 0;
+  return container.textContent?.replace(/\u200b/g, '').length ?? 0;
 }
 
 function getPlainTextFromHtml(value = '') {
   const container = document.createElement('div');
   container.innerHTML = toEditorHtml(value);
-  return container.textContent ?? '';
+  return (container.textContent ?? '').replace(/\u200b/g, '');
 }
 
 function trimWorkflowHtmlEdges(value = '') {
@@ -686,6 +733,21 @@ function trimWorkflowHtmlEdges(value = '') {
   return container.innerHTML;
 }
 
+function normalizeWorkflowDocumentContent(value = '') {
+  if (!value || typeof document === 'undefined') return value;
+  const container = document.createElement('div');
+  container.innerHTML = toEditorHtml(value);
+
+  const nestedBody = container.querySelector('.singleWorkflowSection .mergedWorkflowBody')
+    || container.querySelector('.mergedWorkflowSection .mergedWorkflowBody');
+  if (nestedBody) {
+    return nestedBody.innerHTML;
+  }
+
+  container.querySelectorAll('.mergedWorkflowMeta, .workflowTimestamps').forEach((element) => element.remove());
+  return container.innerHTML;
+}
+
 function getLegacyWorkflowEditHistory(item = {}) {
   return Array.isArray(item.editHistory)
     ? item.editHistory
@@ -700,17 +762,75 @@ function getWorkflowCreatedAt(item = {}) {
 }
 
 function markWorkflowContentEdited(entry, nextContent, now = new Date()) {
-  const currentContent = entry.documentContent ?? entry.content ?? '';
-  if (nextContent === currentContent) return entry;
+  const currentContent = stripTransientObjectUrlsFromEditorHtml(normalizeWorkflowDocumentContent(entry.documentContent ?? entry.content ?? ''));
+  const normalizedNextContent = stripTransientObjectUrlsFromEditorHtml(normalizeWorkflowDocumentContent(nextContent));
+  if (normalizedNextContent === currentContent) return entry;
 
   const timestamp = now.toISOString();
 
   return {
     ...entry,
-    documentContent: nextContent,
+    documentContent: normalizedNextContent,
     createdAt: getWorkflowCreatedAt(entry) || timestamp,
     lastEditedAt: timestamp,
   };
+}
+
+/**
+ * Merge two customer arrays by keeping the newest data for each timeline entry
+ * based on `lastEditedAt`. This prevents IndexedDB (async, may be stale) from
+ * overwriting localStorage data (sync, always latest) on page load.
+ *
+ * Entries missing from one source are kept; for matching entries, the one with
+ * the more recent `lastEditedAt` wins. If neither has `lastEditedAt`, the
+ * current (localStorage) entry is preferred.
+ */
+function mergeCustomersWithLatestData(currentCustomers, storedCustomers) {
+  const storedById = new Map();
+  for (let i = 0; i < storedCustomers.length; i += 1) {
+    const customer = storedCustomers[i];
+    if (customer?.id) storedById.set(customer.id, customer);
+  }
+
+  return currentCustomers.map((currentCustomer) => {
+    const storedCustomer = storedById.get(currentCustomer.id);
+    if (!storedCustomer) return currentCustomer;
+
+    // Merge timeline: prefer newer lastEditedAt; keep entries from both sources
+    const currentTimeline = currentCustomer.timeline ?? [];
+    const storedTimeline = storedCustomer.timeline ?? [];
+    const storedTimelineById = new Map();
+    for (let i = 0; i < storedTimeline.length; i += 1) {
+      const entry = storedTimeline[i];
+      if (entry?.id) storedTimelineById.set(entry.id, entry);
+    }
+
+    const mergedTimeline = currentTimeline.map((currentEntry) => {
+      const storedEntry = storedTimelineById.get(currentEntry.id);
+      if (!storedEntry) return currentEntry;
+
+      const currentTime = currentEntry.lastEditedAt
+        ? new Date(currentEntry.lastEditedAt).getTime() : 0;
+      const storedTime = storedEntry.lastEditedAt
+        ? new Date(storedEntry.lastEditedAt).getTime() : 0;
+
+      return storedTime > currentTime ? storedEntry : currentEntry;
+    });
+
+    // Append entries that exist only in stored
+    const currentEntryIds = new Set();
+    for (let i = 0; i < currentTimeline.length; i += 1) {
+      if (currentTimeline[i]?.id) currentEntryIds.add(currentTimeline[i].id);
+    }
+    for (let i = 0; i < storedTimeline.length; i += 1) {
+      const entry = storedTimeline[i];
+      if (entry?.id && !currentEntryIds.has(entry.id)) {
+        mergedTimeline.push(entry);
+      }
+    }
+
+    return { ...currentCustomer, timeline: mergedTimeline };
+  });
 }
 
 function normalizeEditorUrl(value = '') {
@@ -844,7 +964,7 @@ function App() {
     ? (focusedWorkflow && selectedWorkflowIds.includes(focusedWorkflow.id) ? focusedWorkflow : null)
     : selectedWorkflow;
   const renderWorkflowEditorSection = (item, extraClass = '') => {
-    const content = trimWorkflowHtmlEdges(item.documentContent ?? item.content ?? '');
+    const content = trimWorkflowHtmlEdges(normalizeWorkflowDocumentContent(item.documentContent ?? item.content ?? ''));
     return [
       `<section class="mergedWorkflowSection${extraClass ? ` ${extraClass}` : ''}" data-workflow-id="${item.id}">`,
       `<div class="mergedWorkflowMeta" contenteditable="false">`,
@@ -980,6 +1100,18 @@ function App() {
     document.body.style.removeProperty('user-select');
   }, []);
 
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return undefined;
+
+    function handleNativeEditorInput() {
+      saveCurrentEditorContent();
+    }
+
+    editor.addEventListener('input', handleNativeEditorInput);
+    return () => editor.removeEventListener('input', handleNativeEditorInput);
+  }, [editorKey, isMergedWorkflowView, editorHydrationVersion]);
+
   // Capture editor selection on every mouseup, even when the mouse is released
   // outside the editor container (e.g. dragging from right to left across the
   // panel boundary). Without this, saveEditorSelection() never fires for
@@ -1012,7 +1144,7 @@ function App() {
       try {
         flushEditorContentSync();
         flushCustomersSave();
-        const currentCustomers = customersRef.current;
+        const currentCustomers = stripTransientObjectUrlsFromCustomers(customersRef.current);
         const serialized = JSON.stringify(currentCustomers);
         if (serialized.length <= LOCAL_STORAGE_SAFE_CUSTOMER_SIZE) {
           localStorage.setItem(STORAGE_KEY, serialized);
@@ -1053,17 +1185,23 @@ function App() {
           return;
         }
         const currentCustomers = customersRef.current;
+        const normalizedStoredCustomers = stripTransientObjectUrlsFromCustomers(storedCustomers);
         const selectedExistsInCurrent = currentCustomers.some((customer) => customer.id === selectedId);
-        const selectedExistsInStored = storedCustomers.some((customer) => customer.id === selectedId);
+        const selectedExistsInStored = normalizedStoredCustomers.some((customer) => customer.id === selectedId);
         if (selectedId && selectedExistsInCurrent && !selectedExistsInStored) {
           saveCustomers(currentCustomers);
           return;
         }
-        setCustomers(storedCustomers);
-        customersRef.current = storedCustomers;
+        // Merge: prefer the newest data by lastEditedAt. IndexedDB writes are
+        // async and may not have flushed before a page refresh, so IndexedDB
+        // data can be stale and must not unconditionally overwrite the sync
+        // localStorage data (read in readInitialCustomers).
+        const mergedCustomers = mergeCustomersWithLatestData(currentCustomers, normalizedStoredCustomers);
+        setCustomers(mergedCustomers);
+        customersRef.current = mergedCustomers;
         setEditorHydrationVersion((version) => version + 1);
-        if (!storedCustomers.some((customer) => customer.id === selectedId)) {
-          setSelectedId(storedCustomers[0]?.id ?? '');
+        if (!mergedCustomers.some((customer) => customer.id === selectedId)) {
+          setSelectedId(mergedCustomers[0]?.id ?? '');
           setSelectedWorkflowId('');
           setSelectedWorkflowIds([]);
         }
@@ -1280,10 +1418,23 @@ function App() {
   }
 
   function saveCurrentEditorContent() {
-    if (!editorDirtyRef.current && !editorSyncTimerRef.current) {
+    clearTimeout(editorSyncTimerRef.current);
+    editorSyncTimerRef.current = null;
+    if (!editorRef.current) {
+      flushCustomersSave();
       return customersRef.current;
     }
-    flushEditorContentSync();
+
+    const nextCustomers = getCustomersWithCurrentEditorContent(customersRef.current);
+    if (nextCustomers !== customersRef.current) {
+      commitCustomers(nextCustomers, true);
+      editorDirtyRef.current = false;
+      editorHistoryRef.current.lastHtml = getEditorHtmlForSave();
+      return nextCustomers;
+    }
+
+    flushCustomersSave();
+    editorDirtyRef.current = false;
     return customersRef.current;
   }
 
@@ -2271,29 +2422,9 @@ function App() {
   function getEditorHtmlForSave() {
     if (!editorRef.current) return '';
     const clonedEditor = editorRef.current.cloneNode(true);
-    const editableRoot = !isMergedWorkflowView
-      ? clonedEditor.querySelector('.singleWorkflowSection .mergedWorkflowBody')
-      : clonedEditor;
-    clonedEditor.querySelectorAll('img[data-editor-src]').forEach((image) => {
-      const editorSrc = image.getAttribute('data-editor-src') || '';
-      if (isStoredAssetUrl(editorSrc)) {
-        image.removeAttribute('src');
-      } else if (editorSrc) {
-        image.setAttribute('src', editorSrc);
-      }
-      image.removeAttribute('data-object-url');
-    });
-    clonedEditor.querySelectorAll('video[data-editor-src]').forEach((video) => {
-      const editorSrc = video.getAttribute('data-editor-src') || '';
-      if (isStoredAssetUrl(editorSrc)) {
-        video.removeAttribute('src');
-      } else if (editorSrc) {
-        video.setAttribute('src', editorSrc);
-      }
-      video.removeAttribute('data-object-url');
-    });
+    normalizeEditorMediaSourcesInElement(clonedEditor);
     clearTransientEditorSelectionClasses(clonedEditor);
-    return (editableRoot || clonedEditor).innerHTML;
+    return clonedEditor.innerHTML;
   }
 
   function trimEditorHistoryStack(stack) {
@@ -2410,7 +2541,12 @@ function App() {
     const nextHtml = getEditorHtmlForSave();
     recordEditorHistorySnapshot(nextHtml);
     const currentSavedContent = isMergedWorkflowView ? editorContent : selectedWorkflowContent;
-    if (nextHtml === currentSavedContent) {
+    // Normalize the editor HTML to body content for fair comparison with saved content.
+    // getEditorHtmlForSave() now returns the full editor innerHTML (including the
+    // section wrapper), while currentSavedContent is just the body content. Without
+    // normalization the two would never match, causing unnecessary saves.
+    const normalizedEditorHtml = normalizeWorkflowDocumentContent(nextHtml);
+    if (normalizedEditorHtml === currentSavedContent) {
       editorDirtyRef.current = false;
       return;
     }
@@ -2423,21 +2559,12 @@ function App() {
     flushCustomersSave();
   }
 
-  function syncEditorContentDebounced() {
-    editorDirtyRef.current = true;
-    clearTimeout(editorSyncTimerRef.current);
-    editorSyncTimerRef.current = setTimeout(() => {
-      editorSyncTimerRef.current = null;
-      syncEditorContent();
-    }, 700);
-  }
-
   function flushEditorContentSync() {
     if (editorSyncTimerRef.current) {
       clearTimeout(editorSyncTimerRef.current);
       editorSyncTimerRef.current = null;
-      syncEditorContent();
     }
+    syncEditorContent();
   }
 
   function saveEditorSelection() {
@@ -2953,20 +3080,7 @@ function App() {
     if (!html || typeof document === 'undefined') return html;
     const container = document.createElement('div');
     container.innerHTML = html;
-    container.querySelectorAll('img[src]').forEach((img) => {
-      const src = img.getAttribute('src') || '';
-      if (isStoredAssetUrl(src)) {
-        img.setAttribute('data-editor-src', src);
-        img.removeAttribute('src');
-      }
-    });
-    container.querySelectorAll('video[src]').forEach((video) => {
-      const src = video.getAttribute('src') || '';
-      if (isStoredAssetUrl(src)) {
-        video.setAttribute('data-editor-src', src);
-        video.removeAttribute('src');
-      }
-    });
+    normalizeEditorMediaSourcesInElement(container);
     container.querySelectorAll('.editorAttachmentFrame[data-attachment-url]').forEach((frame) => {
       const url = frame.getAttribute('data-attachment-url') || '';
       if (isStoredAssetUrl(url)) {
@@ -3488,10 +3602,26 @@ function App() {
     const restoredRange = ensureEditorInsertionRange();
     const selection = window.getSelection();
     const range = selection?.rangeCount ? selection.getRangeAt(0) : restoredRange;
+    if (range && isRangeSelectingSingleEditorObject(range)) {
+      const activeObject = editor.querySelector('.editorImageFrame.active, .editorVideoFrame.active, .editorAttachmentFrame.active');
+      if (activeObject) {
+        const objectRange = document.createRange();
+        objectRange.setStartAfter(activeObject);
+        objectRange.collapse(true);
+        selection?.removeAllRanges();
+        selection?.addRange(objectRange);
+        editorSelectionRef.current = objectRange.cloneRange();
+        return objectRange;
+      }
+    }
     const node = range?.commonAncestorContainer;
     const element = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
     const currentBody = element?.closest?.('.mergedWorkflowBody');
-    if (currentBody && editor.contains(currentBody)) return range;
+    if (currentBody && editor.contains(currentBody)) {
+      if (currentBody.contains(range.startContainer) && currentBody.contains(range.endContainer)) {
+        return range;
+      }
+    }
 
     const fallbackBody = !isMergedWorkflowView
       ? editor.querySelector('.singleWorkflowSection .mergedWorkflowBody')
@@ -3515,10 +3645,11 @@ function App() {
     const timestampBlock = document.createElement('div');
     timestampBlock.className = 'editorTimestampBlock';
     timestampBlock.contentEditable = 'false';
-    timestampBlock.textContent = `时间戳 ${timestamp}`;
+    timestampBlock.textContent = timestamp;
 
     const nextLine = document.createElement('div');
-    nextLine.appendChild(document.createElement('br'));
+    const cursorText = document.createTextNode('\u200b');
+    nextLine.appendChild(cursorText);
 
     const fragment = document.createDocumentFragment();
     fragment.appendChild(timestampBlock);
@@ -3528,12 +3659,12 @@ function App() {
     range.insertNode(fragment);
 
     const nextRange = document.createRange();
-    nextRange.selectNodeContents(nextLine);
-    nextRange.collapse(false);
+    nextRange.setStart(cursorText, cursorText.length);
+    nextRange.collapse(true);
     selection?.removeAllRanges();
     selection?.addRange(nextRange);
     editorSelectionRef.current = nextRange.cloneRange();
-    syncEditorContent();
+    syncEditorContentAndFlushSave();
   }
 
   function addEditorImage() {
@@ -4512,7 +4643,7 @@ function App() {
           console.warn('Failed to paste image', error);
         }
       }
-      syncEditorContent();
+      syncEditorContentAndFlushSave();
       return;
     }
 
@@ -4551,7 +4682,7 @@ function App() {
           console.warn('Failed to paste video', error);
         }
       }
-      syncEditorContent();
+      syncEditorContentAndFlushSave();
       return;
     }
 
@@ -4670,7 +4801,7 @@ function App() {
       }
     }
 
-    syncEditorContent();
+    syncEditorContentAndFlushSave();
   }
 
   function handleEditorKeyDown(event) {
@@ -4704,10 +4835,14 @@ function App() {
       return;
     }
 
-    // Auto-linkify on Space or Enter
+    // Auto-linkify after the browser inserts the character/new line.
     if (event.key === ' ' || event.key === 'Enter') {
-      // Defer so the character is inserted first, then scan for URL
-      setTimeout(() => autoLinkifyAtCursor(), 0);
+      setTimeout(() => {
+        autoLinkifyAtCursor();
+        if (event.key === 'Enter') {
+          saveCurrentEditorContent();
+        }
+      }, 0);
     }
 
     if (event.key !== 'Delete' && event.key !== 'Backspace') return;
@@ -5108,7 +5243,6 @@ function App() {
                   className={`messyContent ${isMergedWorkflowView ? 'mergedViewContent' : ''}`}
                   contentEditable={!isMergedWorkflowView && canEditEditor}
                   suppressContentEditableWarning
-                  onInput={syncEditorContentDebounced}
                   onBlur={flushEditorContentSync}
                   onPaste={handleEditorPaste}
                   onDragOver={handleEditorDragOver}
