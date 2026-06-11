@@ -23,6 +23,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Clock3,
   Copy,
   Database,
   Download,
@@ -685,6 +686,33 @@ function trimWorkflowHtmlEdges(value = '') {
   return container.innerHTML;
 }
 
+function getLegacyWorkflowEditHistory(item = {}) {
+  return Array.isArray(item.editHistory)
+    ? item.editHistory
+        .map((entry) => (typeof entry === 'string' ? { at: entry } : entry))
+        .filter((entry) => typeof entry?.at === 'string' && entry.at)
+    : [];
+}
+
+function getWorkflowCreatedAt(item = {}) {
+  const legacyHistory = getLegacyWorkflowEditHistory(item);
+  return item.createdAt || legacyHistory[0]?.at || item.date || '';
+}
+
+function markWorkflowContentEdited(entry, nextContent, now = new Date()) {
+  const currentContent = entry.documentContent ?? entry.content ?? '';
+  if (nextContent === currentContent) return entry;
+
+  const timestamp = now.toISOString();
+
+  return {
+    ...entry,
+    documentContent: nextContent,
+    createdAt: getWorkflowCreatedAt(entry) || timestamp,
+    lastEditedAt: timestamp,
+  };
+}
+
 function normalizeEditorUrl(value = '') {
   const url = value.trim();
   if (!url) return '';
@@ -1217,7 +1245,7 @@ function App() {
         if (customer.id !== selectedCustomer.id) return customer;
         const timeline = (customer.timeline ?? []).map((entry) => (
           contentByWorkflowId.has(entry.id)
-            ? { ...entry, documentContent: contentByWorkflowId.get(entry.id) }
+            ? markWorkflowContentEdited(entry, contentByWorkflowId.get(entry.id))
             : entry
         ));
         return { ...customer, timeline };
@@ -1231,7 +1259,7 @@ function App() {
 
       const timeline = (customer.timeline ?? []).map((entry) => (
         entry.id === selectedWorkflow.id
-          ? { ...entry, documentContent: contentHtml }
+          ? markWorkflowContentEdited(entry, contentHtml)
           : entry
       ));
       return { ...customer, timeline };
@@ -2184,6 +2212,8 @@ function App() {
       content,
       documentContent: shouldMoveDraftIntoNewWorkflow ? contentHtml : '',
       status: '跟进中',
+      createdAt: now.toISOString(),
+      lastEditedAt: shouldMoveDraftIntoNewWorkflow ? now.toISOString() : '',
     };
     const nextNote = `${selectedCustomer.messyNotes ? `${selectedCustomer.messyNotes}\n\n` : ''}[${stamp}] ${title}\n${content}`;
     updateCustomer(selectedCustomer.id, {
@@ -2210,7 +2240,15 @@ function App() {
       return;
     }
 
-    updateWorkflow(selectedWorkflow.id, { documentContent: value });
+    commitCustomersFromUpdater((currentCustomers) => currentCustomers.map((customer) => {
+      if (customer.id !== selectedCustomer.id) return customer;
+      const timeline = (customer.timeline ?? []).map((entry) => (
+        entry.id === selectedWorkflow.id
+          ? markWorkflowContentEdited(entry, value)
+          : entry
+      ));
+      return { ...customer, timeline };
+    }));
   }
 
   function updateMergedWorkflowContent() {
@@ -2223,7 +2261,7 @@ function App() {
       if (customer.id !== selectedCustomer.id) return customer;
       const timeline = (customer.timeline ?? []).map((entry) => (
         contentByWorkflowId.has(entry.id)
-          ? { ...entry, documentContent: contentByWorkflowId.get(entry.id) }
+          ? markWorkflowContentEdited(entry, contentByWorkflowId.get(entry.id))
           : entry
       ));
       return { ...customer, timeline };
@@ -3441,6 +3479,61 @@ function App() {
   function addEditorLink() {
     const url = window.prompt('请输入链接地址');
     if (url) applyEditorCommand('createLink', normalizeEditorUrl(url));
+  }
+
+  function getEditorEditableInsertionRange() {
+    const editor = editorRef.current;
+    if (!editor) return null;
+
+    const restoredRange = ensureEditorInsertionRange();
+    const selection = window.getSelection();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : restoredRange;
+    const node = range?.commonAncestorContainer;
+    const element = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+    const currentBody = element?.closest?.('.mergedWorkflowBody');
+    if (currentBody && editor.contains(currentBody)) return range;
+
+    const fallbackBody = !isMergedWorkflowView
+      ? editor.querySelector('.singleWorkflowSection .mergedWorkflowBody')
+      : editor.querySelector('.mergedWorkflowBody');
+    const target = fallbackBody || editor;
+    const nextRange = document.createRange();
+    nextRange.selectNodeContents(target);
+    nextRange.collapse(false);
+    selection?.removeAllRanges();
+    selection?.addRange(nextRange);
+    editorSelectionRef.current = nextRange.cloneRange();
+    return nextRange;
+  }
+
+  function insertEditorTimestamp() {
+    const range = getEditorEditableInsertionRange();
+    if (!range) return;
+    const selection = window.getSelection();
+    const timestamp = new Date().toLocaleString('zh-CN', { hour12: false });
+
+    const timestampBlock = document.createElement('div');
+    timestampBlock.className = 'editorTimestampBlock';
+    timestampBlock.contentEditable = 'false';
+    timestampBlock.textContent = `时间戳 ${timestamp}`;
+
+    const nextLine = document.createElement('div');
+    nextLine.appendChild(document.createElement('br'));
+
+    const fragment = document.createDocumentFragment();
+    fragment.appendChild(timestampBlock);
+    fragment.appendChild(nextLine);
+
+    range.deleteContents();
+    range.insertNode(fragment);
+
+    const nextRange = document.createRange();
+    nextRange.selectNodeContents(nextLine);
+    nextRange.collapse(false);
+    selection?.removeAllRanges();
+    selection?.addRange(nextRange);
+    editorSelectionRef.current = nextRange.cloneRange();
+    syncEditorContent();
   }
 
   function addEditorImage() {
@@ -4962,6 +5055,9 @@ function App() {
                   </button>
                   <button type="button" className="toolbarIconButton" onMouseDown={(event) => event.preventDefault()} onClick={addEditorLink} title="插入链接">
                     <Link size={16} />
+                  </button>
+                  <button type="button" className="toolbarIconButton" onMouseDown={(event) => event.preventDefault()} onClick={insertEditorTimestamp} title="插入时间戳">
+                    <Clock3 size={16} />
                   </button>
                   <button type="button" className="toolbarIconButton" onMouseDown={(event) => event.preventDefault()} onClick={addEditorImage} title="插入图片">
                     <Image size={16} />

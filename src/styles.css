@@ -1655,6 +1655,21 @@ button {
   min-height: 1.65em;
 }
 
+.editorTimestampBlock {
+  width: fit-content;
+  max-width: 100%;
+  margin: 10px 0 6px;
+  padding: 3px 9px;
+  border: 1px solid rgba(12, 139, 141, 0.24);
+  border-radius: 999px;
+  color: #087678;
+  background: rgba(239, 252, 250, 0.82);
+  font-size: 12px;
+  font-weight: 760;
+  line-height: 1.45;
+  user-select: none;
+}
+
 .messyContent a {
   color: #2563eb;
   cursor: pointer;
