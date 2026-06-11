@@ -79,6 +79,7 @@ const EDITOR_TEXT_COLORS = ['#111111', '#dc2626', '#2563eb', '#16a34a', '#ca8a04
 const EDITOR_BACKGROUND_COLORS = ['#fff7ad', '#fee2e2', '#dbeafe', '#dcfce7', '#f3e8ff', '#ffffff'];
 const DEFAULT_EDITOR_TEXT_COLOR = EDITOR_TEXT_COLORS[0];
 const DEFAULT_EDITOR_BACKGROUND_COLOR = EDITOR_BACKGROUND_COLORS[5];
+const INLINE_EDITOR_FORMAT_TAGS = new Set(['SPAN', 'FONT', 'B', 'STRONG', 'I', 'EM', 'U', 'A', 'MARK']);
 const EDITOR_ATTACHMENT_ACCEPT = '.pdf,.doc,.docx,.xls,.xlsx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const EDITOR_VIDEO_ACCEPT = 'video/*';
 const EDITOR_IMAGE_MIN_WIDTH = 80;
@@ -3037,6 +3038,8 @@ function App() {
   function collectFormattingFromElement(el, defaults, style) {
     const computed = window.getComputedStyle(el);
     const tag = el.tagName;
+    const inlineStyle = el instanceof HTMLElement ? el.style : null;
+    const canProvideInlineBackground = INLINE_EDITOR_FORMAT_TAGS.has(tag) || Boolean(inlineStyle?.backgroundColor);
 
     // Bold: from <b>/<strong> tag or computed font-weight
     if (!style.fontWeight) {
@@ -3084,7 +3087,7 @@ function App() {
     }
 
     // Background color
-    if (!style.backgroundColor) {
+    if (!style.backgroundColor && canProvideInlineBackground) {
       const bg = computed.backgroundColor;
       if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent' && bg !== (defaults?.backgroundColor || '')) {
         style.backgroundColor = bg;
@@ -3188,7 +3191,8 @@ function App() {
     range.insertNode(styledSpan);
     selection.removeAllRanges();
     const nextRange = document.createRange();
-    nextRange.selectNodeContents(styledSpan);
+    nextRange.setStartAfter(styledSpan);
+    nextRange.collapse(true);
     selection.addRange(nextRange);
     syncEditorContent();
     editorSelectionRef.current = nextRange.cloneRange();
