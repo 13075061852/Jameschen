@@ -3122,22 +3122,30 @@ function App() {
       saveEditorSelection();
       return;
     }
-    if (range.collapsed) {
+    const styleKeys = Object.keys(style);
+    const canUseNativeInlineCommand = styleKeys.length > 0
+      && styleKeys.every((key) => key === 'color' || key === 'backgroundColor');
+
+    if (range.collapsed || canUseNativeInlineCommand) {
       document.execCommand('styleWithCSS', false, true);
       if (style.color) {
         document.execCommand('foreColor', false, style.color);
       }
       if (style.backgroundColor) {
-        document.execCommand('hiliteColor', false, style.backgroundColor);
+        const appliedHighlight = document.execCommand('hiliteColor', false, style.backgroundColor);
+        if (!appliedHighlight) {
+          document.execCommand('backColor', false, style.backgroundColor);
+        }
       }
       prepareEditorStoredAssetSources();
       saveEditorSelection();
+      syncEditorContent();
       return;
     }
     const styledSpan = document.createElement('span');
     Object.assign(styledSpan.style, style);
     styledSpan.appendChild(range.extractContents());
-    clearNestedEditorStyles(styledSpan, Object.keys(style));
+    clearNestedEditorStyles(styledSpan, styleKeys);
     applyStyleToNestedEditorElements(styledSpan, style);
     range.insertNode(styledSpan);
 
