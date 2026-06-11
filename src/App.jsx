@@ -3337,7 +3337,7 @@ function App() {
     return frame;
   }
 
-  function insertEditorAttachment(file, url) {
+  function insertEditorAttachment(file, url, { sync = true, selectInserted = true } = {}) {
     if (!editorRef.current) return;
     const range = ensureEditorInsertionRange();
     if (!range) return;
@@ -3356,8 +3356,13 @@ function App() {
     range.collapse(true);
     selection?.removeAllRanges();
     selection?.addRange(range);
-    selectEditorObject(frame);
-    syncEditorContent();
+    if (selectInserted) {
+      selectEditorObject(frame);
+    } else {
+      clearActiveEditorObjects();
+      editorSelectionRef.current = range.cloneRange();
+    }
+    if (sync) syncEditorContent();
     saveEditorSelection();
   }
 
@@ -3414,7 +3419,7 @@ function App() {
     return file.type.startsWith('video/') || /\.(mp4|webm|ogg|mov|m4v)$/i.test(file.name);
   }
 
-  function insertEditorVideo(file, src, { sync = true } = {}) {
+  function insertEditorVideo(file, src, { sync = true, selectInserted = true } = {}) {
     insertEditorAttachment(
       {
         name: file.name,
@@ -3422,8 +3427,8 @@ function App() {
         size: file.size,
       },
       src,
+      { sync, selectInserted },
     );
-    if (sync) syncEditorContent();
     return;
 
     if (!editorRef.current) return;
@@ -3508,7 +3513,7 @@ function App() {
             kind: 'video',
           })
           : '';
-        if (videoUrl) insertEditorVideo(file, videoUrl, { sync: false });
+        if (videoUrl) insertEditorVideo(file, videoUrl, { sync: false, selectInserted: files.length === 1 });
         await new Promise((resolve) => requestAnimationFrame(resolve));
       } catch (error) {
         console.error('Failed to insert video', file.name, error);
@@ -3543,7 +3548,7 @@ function App() {
             kind: getAttachmentKind(file.name, file.type),
           })
           : '';
-        if (url) insertEditorAttachment(file, url);
+        if (url) insertEditorAttachment(file, url, { sync: false, selectInserted: files.length === 1 });
       } catch (error) {
         console.error('Failed to attach file', file.name, error);
         window.alert(`附件「${file.name}」读取失败，已跳过`);
@@ -3614,7 +3619,7 @@ function App() {
     syncEditorContent();
   }
 
-  function insertEditorImage(src, { sync = true } = {}) {
+  function insertEditorImage(src, { sync = true, selectInserted = true } = {}) {
     if (!editorRef.current) return;
     const range = ensureEditorInsertionRange();
     if (!range) return;
@@ -3675,7 +3680,12 @@ function App() {
     range.collapse(true);
     selection?.removeAllRanges();
     selection?.addRange(range);
-    selectEditorObject(frame);
+    if (selectInserted) {
+      selectEditorObject(frame);
+    } else {
+      clearActiveEditorObjects();
+      editorSelectionRef.current = range.cloneRange();
+    }
     if (sync) syncEditorContent();
     saveEditorSelection();
   }
@@ -3704,7 +3714,7 @@ function App() {
             kind: 'image',
           })
           : '';
-        if (imageUrl) insertEditorImage(imageUrl, { sync: false });
+        if (imageUrl) insertEditorImage(imageUrl, { sync: false, selectInserted: files.length === 1 });
         await new Promise((resolve) => requestAnimationFrame(resolve));
       } catch (error) {
         console.error('Failed to insert image', file.name, error);
