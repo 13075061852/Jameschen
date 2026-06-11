@@ -783,6 +783,7 @@ function App() {
     lastHtml: '',
     isRestoring: false,
   });
+  const workflowSelectionByCustomerRef = useRef(new Map());
   const customerSaveTimerRef = useRef(null);
   const editorObjectUrlsRef = useRef(new Set());
   const formatPainterRef = useRef(null);
@@ -814,23 +815,27 @@ function App() {
   const activeWorkflowForActions = isMergedWorkflowView
     ? (focusedWorkflow && selectedWorkflowIds.includes(focusedWorkflow.id) ? focusedWorkflow : null)
     : selectedWorkflow;
+  const renderWorkflowEditorSection = (item, extraClass = '') => {
+    const content = trimWorkflowHtmlEdges(item.documentContent ?? item.content ?? '');
+    return [
+      `<section class="mergedWorkflowSection${extraClass ? ` ${extraClass}` : ''}" data-workflow-id="${item.id}">`,
+      `<div class="mergedWorkflowMeta" contenteditable="false">`,
+      `<span>${escapeHtml(item.date ?? '')}</span>`,
+      `<span>${escapeHtml(item.title ?? item.content ?? '沟通记录')}</span>`,
+      `<span class="statusTag status${item.status}">${escapeHtml(item.status ?? '')}</span>`,
+      `</div>`,
+      `<div class="mergedWorkflowBody" contenteditable="true">${toEditorHtml(content)}</div>`,
+      `</section>`,
+    ].join('');
+  };
+  const selectedWorkflowContent = selectedWorkflow
+    ? selectedWorkflow.documentContent ?? selectedWorkflow.content ?? ''
+    : selectedCustomer?.messyNotes ?? '';
   const editorContent = isMergedWorkflowView
-    ? mergedWorkflows.map((item) => {
-      const content = trimWorkflowHtmlEdges(item.documentContent ?? item.content ?? '');
-      return [
-        `<section class="mergedWorkflowSection" data-workflow-id="${item.id}">`,
-        `<div class="mergedWorkflowMeta" contenteditable="false">`,
-        `<span>${escapeHtml(item.date ?? '')}</span>`,
-        `<span>${escapeHtml(item.title ?? item.content ?? '沟通记录')}</span>`,
-        `<span class="statusTag status${item.status}">${escapeHtml(item.status ?? '')}</span>`,
-        `</div>`,
-        `<div class="mergedWorkflowBody" contenteditable="true">${toEditorHtml(content)}</div>`,
-        `</section>`,
-      ].join('');
-    }).join('')
+    ? mergedWorkflows.map((item) => renderWorkflowEditorSection(item)).join('')
     : selectedWorkflow
-      ? selectedWorkflow.documentContent ?? selectedWorkflow.content ?? ''
-      : selectedCustomer?.messyNotes ?? '';
+      ? renderWorkflowEditorSection(selectedWorkflow, 'singleWorkflowSection')
+      : selectedWorkflowContent;
   const mergedWorkflowMetaKey = isMergedWorkflowView
     ? mergedWorkflows.map((item) => [
       item.id,
@@ -839,13 +844,21 @@ function App() {
       item.status ?? '',
     ].join(':')).join('|')
     : '';
+  const singleWorkflowMetaKey = !isMergedWorkflowView && selectedWorkflow
+    ? [
+      selectedWorkflow.id,
+      selectedWorkflow.date ?? '',
+      selectedWorkflow.title ?? selectedWorkflow.content ?? '沟通记录',
+      selectedWorkflow.status ?? '',
+    ].join(':')
+    : '';
   const editorKey = isMergedWorkflowView
     ? `merged:${selectedCustomer?.id ?? 'empty'}:${selectedWorkflowIds.join(',')}`
     : selectedWorkflow
       ? selectedWorkflow.id
       : selectedCustomer?.id ?? 'empty-editor';
   const canEditEditor = Boolean(selectedCustomer) && (!isMergedWorkflowView || mergedWorkflows.length > 0);
-  const editorWordCount = useMemo(() => getTextLengthFromHtml(editorContent), [editorContent]);
+  const editorWordCount = useMemo(() => getTextLengthFromHtml(selectedWorkflowContent), [selectedWorkflowContent]);
   const selectedCustomerTitle = selectedCustomer
     ? (selectedCustomer.displayTitle || [selectedCustomer.company || '未命名用户', selectedCustomer.country].filter(Boolean).join(' · '))
     : '未命名用户';
@@ -892,6 +905,14 @@ function App() {
   }, [customers]);
 
   useEffect(() => {
+    if (!selectedId || !selectedWorkflowId) return;
+    const workflows = customers.find((customer) => customer.id === selectedId)?.timeline ?? [];
+    if (workflows.some((workflow) => workflow.id === selectedWorkflowId)) {
+      workflowSelectionByCustomerRef.current.set(selectedId, selectedWorkflowId);
+    }
+  }, [customers, selectedId, selectedWorkflowId]);
+
+  useEffect(() => {
     setCustomerRenderLimit(INITIAL_CUSTOMER_RENDER_LIMIT);
     exitBatchMode();
   }, [gradeFilter, query]);
@@ -904,7 +925,7 @@ function App() {
     prepareEditorAttachments();
     editorSelectionRef.current = null;
     resetEditorHistory();
-  }, [editorKey, isMergedWorkflowView, editorHydrationVersion]);
+  }, [editorKey, isMergedWorkflowView, singleWorkflowMetaKey, editorHydrationVersion]);
 
   useEffect(() => {
     if (!editorRef.current || !isMergedWorkflowView) return;
@@ -1401,12 +1422,30 @@ function App() {
     ));
   }
 
+  function rememberSelectedWorkflowForCustomer(customerId = selectedId, workflowId = selectedWorkflowId) {
+    if (customerId && workflowId) {
+      workflowSelectionByCustomerRef.current.set(customerId, workflowId);
+    }
+  }
+
+  function getRememberedWorkflowId(customerId, sourceCustomers = customersRef.current) {
+    if (!customerId) return '';
+    const workflows = sourceCustomers.find((customer) => customer.id === customerId)?.timeline ?? [];
+    if (workflows.length === 0) return '';
+    const rememberedWorkflowId = workflowSelectionByCustomerRef.current.get(customerId) || '';
+    return workflows.some((workflow) => workflow.id === rememberedWorkflowId)
+      ? rememberedWorkflowId
+      : workflows[0]?.id ?? '';
+  }
+
   function selectCustomer(id) {
-    saveCurrentEditorContent();
+    const nextCustomers = saveCurrentEditorContent();
+    rememberSelectedWorkflowForCustomer();
+    const nextWorkflowId = getRememberedWorkflowId(id, nextCustomers);
     setSelectedId(id);
-    setSelectedWorkflowId('');
+    setSelectedWorkflowId(nextWorkflowId);
     setSelectedWorkflowIds([]);
-    saveViewState({ selectedId: id, selectedWorkflowId: '', selectedWorkflowIds: [], workflowViewMode });
+    saveViewState({ selectedId: id, selectedWorkflowId: nextWorkflowId, selectedWorkflowIds: [], workflowViewMode });
     setEditingWorkflowTitleId('');
   }
 
@@ -1436,16 +1475,19 @@ function App() {
 
   function selectSingleWorkflow(workflowId) {
     saveCurrentEditorContent();
+    rememberSelectedWorkflowForCustomer(selectedId, workflowId);
     setSelectedWorkflowId(workflowId);
   }
 
   function focusWorkflow(workflowId) {
     saveCurrentEditorContent();
+    rememberSelectedWorkflowForCustomer(selectedId, workflowId);
     setSelectedWorkflowId(workflowId);
   }
 
   function toggleMergedWorkflow(workflowId) {
     saveCurrentEditorContent();
+    rememberSelectedWorkflowForCustomer(selectedId, workflowId);
     setSelectedWorkflowId(workflowId);
     setSelectedWorkflowIds((current) => {
       if (current.includes(workflowId)) {
@@ -1673,8 +1715,10 @@ function App() {
     cleanupUnusedAssets(nextCustomers);
     if (selectedId === customerId) {
       const nextVisibleCustomer = filteredCustomers.find((customer) => customer.id !== customerId) ?? nextCustomers[0];
-      setSelectedId(nextVisibleCustomer?.id ?? '');
-      setSelectedWorkflowId('');
+      const nextCustomerId = nextVisibleCustomer?.id ?? '';
+      const nextWorkflowId = getRememberedWorkflowId(nextCustomerId, nextCustomers);
+      setSelectedId(nextCustomerId);
+      setSelectedWorkflowId(nextWorkflowId);
       setArchiveEditing(false);
       setArchiveDraft(null);
     }
@@ -1728,8 +1772,10 @@ function App() {
     cleanupUnusedAssets(nextCustomers);
     if (idSet.has(selectedId)) {
       const nextCustomer = nextCustomers[0];
-      setSelectedId(nextCustomer?.id ?? '');
-      setSelectedWorkflowId('');
+      const nextCustomerId = nextCustomer?.id ?? '';
+      const nextWorkflowId = getRememberedWorkflowId(nextCustomerId, nextCustomers);
+      setSelectedId(nextCustomerId);
+      setSelectedWorkflowId(nextWorkflowId);
       setArchiveEditing(false);
       setArchiveDraft(null);
     }
@@ -2187,6 +2233,9 @@ function App() {
   function getEditorHtmlForSave() {
     if (!editorRef.current) return '';
     const clonedEditor = editorRef.current.cloneNode(true);
+    const editableRoot = !isMergedWorkflowView
+      ? clonedEditor.querySelector('.singleWorkflowSection .mergedWorkflowBody')
+      : clonedEditor;
     clonedEditor.querySelectorAll('img[data-editor-src]').forEach((image) => {
       const editorSrc = image.getAttribute('data-editor-src') || '';
       if (isStoredAssetUrl(editorSrc)) {
@@ -2206,7 +2255,7 @@ function App() {
       video.removeAttribute('data-object-url');
     });
     clearTransientEditorSelectionClasses(clonedEditor);
-    return clonedEditor.innerHTML;
+    return (editableRoot || clonedEditor).innerHTML;
   }
 
   function trimEditorHistoryStack(stack) {
@@ -2254,7 +2303,10 @@ function App() {
     editorSyncTimerRef.current = null;
     editorDirtyRef.current = false;
 
-    editor.innerHTML = toEditorHtml(stripStoredAssetSrcBeforeDomInsert(html));
+    const nextHtml = !isMergedWorkflowView && selectedWorkflow
+      ? renderWorkflowEditorSection({ ...selectedWorkflow, documentContent: html }, 'singleWorkflowSection')
+      : html;
+    editor.innerHTML = toEditorHtml(stripStoredAssetSrcBeforeDomInsert(nextHtml));
     prepareEditorImages();
     prepareEditorVideos();
     prepareEditorAttachments();
@@ -2319,7 +2371,8 @@ function App() {
     if (!editorRef.current) return;
     const nextHtml = getEditorHtmlForSave();
     recordEditorHistorySnapshot(nextHtml);
-    if (nextHtml === editorContent) {
+    const currentSavedContent = isMergedWorkflowView ? editorContent : selectedWorkflowContent;
+    if (nextHtml === currentSavedContent) {
       editorDirtyRef.current = false;
       return;
     }
