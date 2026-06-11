@@ -23,6 +23,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Copy,
   Database,
   Download,
   Eraser,
@@ -94,6 +95,7 @@ const INITIAL_CUSTOMER_RENDER_LIMIT = 80;
 const CUSTOMER_RENDER_INCREMENT = 80;
 const COLLAPSED_CUSTOMER_RENDER_LIMIT = 120;
 const STORED_ASSET_PREFIX = 'dbasset:';
+const EDITOR_HISTORY_LIMIT = 120;
 
 const gradeMap = {
   A: '非常优质',
@@ -584,6 +586,38 @@ function dataUrlToBlobUrl(dataUrl = '', fallbackType = 'application/octet-stream
   return URL.createObjectURL(new Blob([arrayBuffer], { type }));
 }
 
+function dataUrlToBlob(dataUrl = '', fallbackType = 'application/octet-stream') {
+  const type = dataUrl.match(/^data:([^;,]+)/)?.[1] || fallbackType;
+  const arrayBuffer = dataUrlToArrayBuffer(dataUrl);
+  return new Blob([arrayBuffer], { type });
+}
+
+function imageDataUrlToPngBlob(dataUrl = '') {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = image.naturalWidth || image.width;
+        canvas.height = image.naturalHeight || image.height;
+        const context = canvas.getContext('2d');
+        context.drawImage(image, 0, 0);
+        canvas.toBlob((blob) => {
+          if (blob) {
+            resolve(blob);
+          } else {
+            resolve(dataUrlToBlob(dataUrl, 'image/png'));
+          }
+        }, 'image/png');
+      } catch (error) {
+        reject(error);
+      }
+    };
+    image.onerror = () => reject(new Error('图片转换失败'));
+    image.src = dataUrl;
+  });
+}
+
 function escapeHtml(value = '') {
   return value
     .replaceAll('&', '&amp;')
@@ -737,6 +771,12 @@ function App() {
   const imageDragLastEventRef = useRef(null);
   const editorSyncTimerRef = useRef(null);
   const editorDirtyRef = useRef(false);
+  const editorHistoryRef = useRef({
+    undoStack: [],
+    redoStack: [],
+    lastHtml: '',
+    isRestoring: false,
+  });
   const customerSaveTimerRef = useRef(null);
   const editorObjectUrlsRef = useRef(new Set());
   const formatPainterRef = useRef(null);
@@ -857,6 +897,7 @@ function App() {
     prepareEditorVideos();
     prepareEditorAttachments();
     editorSelectionRef.current = null;
+    resetEditorHistory();
   }, [editorKey, isMergedWorkflowView, editorHydrationVersion]);
 
   useEffect(() => {
@@ -866,6 +907,7 @@ function App() {
     prepareEditorVideos();
     prepareEditorAttachments();
     editorSelectionRef.current = null;
+    resetEditorHistory();
   }, [editorKey, isMergedWorkflowView, mergedWorkflowMetaKey, editorHydrationVersion]);
 
   useEffect(() => () => {
@@ -893,6 +935,14 @@ function App() {
     }
     document.addEventListener('mouseup', handleGlobalMouseUp);
     return () => document.removeEventListener('mouseup', handleGlobalMouseUp);
+  }, []);
+
+  useEffect(() => {
+    function handleSelectionChange() {
+      updateEditorRangeSelectionState();
+    }
+    document.addEventListener('selectionchange', handleSelectionChange);
+    return () => document.removeEventListener('selectionchange', handleSelectionChange);
   }, []);
 
   // Emergency flush: save latest data to localStorage before the tab closes.
@@ -1472,6 +1522,7 @@ function App() {
       const fragment = range.cloneContents();
       const temp = document.createElement('div');
       temp.appendChild(fragment);
+      clearTransientEditorSelectionClasses(temp);
       selectedHtml = temp.innerHTML;
     }
     setMentionSourceHtml(selectedHtml);
@@ -1483,13 +1534,18 @@ function App() {
 
   function handleEditorContextMenu(event) {
     event.preventDefault();
-    // Only show the context menu if there's selected text in the editor (or the editor has focus)
-    const range = editorSelectionRef.current;
-    const hasSelection = range && !range.collapsed && editorRef.current?.contains(range.commonAncestorContainer);
+    saveEditorSelection();
+    const targetObject = getClosestEditorObject(event.target);
+    const selectedRange = getSavedEditorSelectionRange();
+    if (targetObject && (!selectedRange || !rangeIntersectsNode(selectedRange, targetObject))) {
+      selectEditorObject(targetObject);
+    }
+    const hasSelection = Boolean(getSavedEditorSelectionRange());
     setContextMenu({
       x: event.clientX,
       y: event.clientY,
       hasSelection,
+      hasAttachments: getSelectedEditorAttachments().length > 0,
     });
   }
 
@@ -2121,16 +2177,112 @@ function App() {
       video.setAttribute('src', video.getAttribute('data-editor-src'));
       video.removeAttribute('data-object-url');
     });
-    clonedEditor.querySelectorAll('.editorImageFrame.active').forEach((element) => {
-      element.classList.remove('active');
-    });
-    clonedEditor.querySelectorAll('.editorVideoFrame.active').forEach((element) => {
-      element.classList.remove('active');
-    });
-    clonedEditor.querySelectorAll('.editorAttachmentFrame.active').forEach((element) => {
-      element.classList.remove('active');
-    });
+    clearTransientEditorSelectionClasses(clonedEditor);
     return clonedEditor.innerHTML;
+  }
+
+  function trimEditorHistoryStack(stack) {
+    if (stack.length > EDITOR_HISTORY_LIMIT) {
+      stack.splice(0, stack.length - EDITOR_HISTORY_LIMIT);
+    }
+  }
+
+  function resetEditorHistory() {
+    editorHistoryRef.current = {
+      undoStack: [],
+      redoStack: [],
+      lastHtml: getEditorHtmlForSave(),
+      isRestoring: false,
+    };
+  }
+
+  function recordEditorHistorySnapshot(nextHtml = getEditorHtmlForSave()) {
+    const history = editorHistoryRef.current;
+    if (history.isRestoring || nextHtml === history.lastHtml) return false;
+    history.undoStack.push(history.lastHtml);
+    trimEditorHistoryStack(history.undoStack);
+    history.redoStack = [];
+    history.lastHtml = nextHtml;
+    return true;
+  }
+
+  function placeEditorCursorAtEnd() {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    range.collapse(false);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    editorSelectionRef.current = range.cloneRange();
+  }
+
+  function restoreEditorHtmlFromHistory(html) {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editorHistoryRef.current.isRestoring = true;
+    clearTimeout(editorSyncTimerRef.current);
+    editorSyncTimerRef.current = null;
+    editorDirtyRef.current = false;
+
+    editor.innerHTML = toEditorHtml(stripStoredAssetSrcBeforeDomInsert(html));
+    prepareEditorImages();
+    prepareEditorVideos();
+    prepareEditorAttachments();
+    clearActiveEditorObjects();
+    clearEditorRangeSelectionState();
+    placeEditorCursorAtEnd();
+    updateEditorContent(getEditorHtmlForSave());
+    editorHistoryRef.current.lastHtml = getEditorHtmlForSave();
+    editorHistoryRef.current.isRestoring = false;
+  }
+
+  function commitPendingEditorHistory() {
+    clearTimeout(editorSyncTimerRef.current);
+    editorSyncTimerRef.current = null;
+    if (!editorRef.current) return '';
+    const nextHtml = getEditorHtmlForSave();
+    const changed = recordEditorHistorySnapshot(nextHtml);
+    if (changed || editorDirtyRef.current) {
+      updateEditorContent(nextHtml);
+    }
+    editorDirtyRef.current = false;
+    return nextHtml;
+  }
+
+  function undoEditorChange() {
+    if (!editorRef.current) return false;
+    const currentHtml = commitPendingEditorHistory();
+    const history = editorHistoryRef.current;
+    const previousHtml = history.undoStack.pop();
+    if (typeof previousHtml !== 'string') {
+      restoreEditorSelection();
+      const usedNativeUndo = document.execCommand('undo');
+      syncEditorContent();
+      return usedNativeUndo;
+    }
+    history.redoStack.push(currentHtml);
+    trimEditorHistoryStack(history.redoStack);
+    restoreEditorHtmlFromHistory(previousHtml);
+    return true;
+  }
+
+  function redoEditorChange() {
+    if (!editorRef.current) return false;
+    const currentHtml = commitPendingEditorHistory();
+    const history = editorHistoryRef.current;
+    const nextHtml = history.redoStack.pop();
+    if (typeof nextHtml !== 'string') {
+      restoreEditorSelection();
+      const usedNativeRedo = document.execCommand('redo');
+      syncEditorContent();
+      return usedNativeRedo;
+    }
+    history.undoStack.push(currentHtml);
+    trimEditorHistoryStack(history.undoStack);
+    restoreEditorHtmlFromHistory(nextHtml);
+    return true;
   }
 
   function syncEditorContent() {
@@ -2138,6 +2290,7 @@ function App() {
     editorSyncTimerRef.current = null;
     if (!editorRef.current) return;
     const nextHtml = getEditorHtmlForSave();
+    recordEditorHistorySnapshot(nextHtml);
     if (nextHtml === editorContent) {
       editorDirtyRef.current = false;
       return;
@@ -2169,6 +2322,9 @@ function App() {
     const range = selection.getRangeAt(0);
     const editor = editorRef.current;
     if (!editor.contains(range.commonAncestorContainer)) return;
+    if (!isRangeSelectingSingleEditorObject(range)) {
+      clearActiveEditorObjects();
+    }
     editorSelectionRef.current = range.cloneRange();
     const element = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
       ? range.commonAncestorContainer
@@ -2190,6 +2346,42 @@ function App() {
     }
   }
 
+  function clearEditorRangeSelectionState() {
+    editorRef.current?.querySelectorAll('.rangeSelected').forEach((element) => {
+      element.classList.remove('rangeSelected');
+    });
+  }
+
+  function clearTransientEditorSelectionClasses(container) {
+    container.querySelectorAll('.editorImageFrame.active, .editorVideoFrame.active, .editorAttachmentFrame.active, .rangeSelected').forEach((element) => {
+      element.classList.remove('active', 'rangeSelected');
+    });
+  }
+
+  function rangeIntersectsNode(range, node) {
+    try {
+      return range.intersectsNode(node);
+    } catch {
+      return false;
+    }
+  }
+
+  function updateEditorRangeSelectionState() {
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    clearEditorRangeSelectionState();
+    if (!editor || !selection?.rangeCount || selection.isCollapsed) return;
+
+    const ranges = Array.from({ length: selection.rangeCount }, (_, index) => selection.getRangeAt(index));
+    if (!ranges.some((range) => rangeIntersectsNode(range, editor))) return;
+
+    editor.querySelectorAll('.editorImageFrame, .editorVideoFrame, .editorAttachmentFrame').forEach((frame) => {
+      if (ranges.some((range) => rangeIntersectsNode(range, frame))) {
+        frame.classList.add('rangeSelected');
+      }
+    });
+  }
+
   function restoreEditorSelection() {
     const selection = window.getSelection();
     const range = editorSelectionRef.current;
@@ -2198,6 +2390,264 @@ function App() {
     selection.removeAllRanges();
     selection.addRange(range);
     return true;
+  }
+
+  function getSavedEditorSelectionRange() {
+    const range = editorSelectionRef.current;
+    const editor = editorRef.current;
+    if (!range || !editor || range.collapsed) return null;
+    if (!editor.contains(range.commonAncestorContainer)) return null;
+    return range;
+  }
+
+  function getSelectedEditorAttachments() {
+    const range = getSavedEditorSelectionRange();
+    if (!range) return [];
+
+    const fragment = range.cloneContents();
+    const container = document.createElement('div');
+    container.appendChild(fragment);
+    return Array.from(container.querySelectorAll('.editorAttachmentFrame[data-attachment-url]'))
+      .map((frame) => {
+        const name = frame.getAttribute('data-attachment-name') || frame.dataset.attachmentName || '附件';
+        const type = frame.getAttribute('data-attachment-type') || frame.dataset.attachmentType || 'application/octet-stream';
+        const url = frame.getAttribute('data-attachment-url') || frame.dataset.attachmentUrl || '';
+        const size = Number(frame.getAttribute('data-attachment-size') || frame.dataset.attachmentSize || 0);
+        const kind = getAttachmentKind(name, type);
+        return { name, type, url, size, kind };
+      })
+      .filter((attachment) => attachment.url && ['pdf', 'word', 'excel'].includes(attachment.kind));
+  }
+
+  function triggerBlobDownload(blob, fileName) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName || '附件';
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  }
+
+  async function downloadSelectedEditorAttachments() {
+    const attachments = getSelectedEditorAttachments();
+    if (attachments.length === 0) {
+      window.alert('请先选中 PDF、Word 或 Excel 文档');
+      return;
+    }
+
+    for (const attachment of attachments) {
+      try {
+        const dataUrl = await resolveStoredAssetDataUrl(attachment.url);
+        triggerBlobDownload(dataUrlToBlob(dataUrl, attachment.type), attachment.name);
+        await new Promise((resolve) => setTimeout(resolve, 180));
+      } catch (error) {
+        console.warn('Failed to download selected attachment', error);
+        window.alert(`文档「${attachment.name}」下载失败`);
+      }
+    }
+  }
+
+  async function resolveClipboardImageSources(container) {
+    const images = Array.from(container.querySelectorAll('img'));
+    await Promise.all(images.map(async (image) => {
+      const editorSrc = image.getAttribute('data-editor-src') || '';
+      const currentSrc = image.getAttribute('src') || '';
+      const source = editorSrc || currentSrc;
+      if (!source) return;
+
+      try {
+        const dataUrl = isStoredAssetUrl(source)
+          ? await resolveStoredAssetDataUrl(source)
+          : source;
+        if (dataUrl.startsWith('data:image/')) {
+          image.setAttribute('src', dataUrl);
+        } else if (!isStoredAssetUrl(dataUrl)) {
+          image.setAttribute('src', dataUrl);
+        }
+      } catch (error) {
+        console.warn('Failed to resolve clipboard image source', error);
+      }
+      image.removeAttribute('data-object-url');
+    }));
+  }
+
+  async function resolveClipboardAttachmentUrls(container) {
+    const frames = Array.from(container.querySelectorAll('.editorAttachmentFrame[data-attachment-url]'));
+    await Promise.all(frames.map(async (frame) => {
+      const url = frame.getAttribute('data-attachment-url') || '';
+      if (!isStoredAssetUrl(url)) return;
+      try {
+        frame.setAttribute('data-attachment-url', await resolveStoredAssetDataUrl(url));
+      } catch (error) {
+        console.warn('Failed to resolve clipboard attachment source', error);
+      }
+    }));
+  }
+
+  function getEditorClipboardPlainText(container) {
+    const clone = container.cloneNode(true);
+    clone.querySelectorAll('.editorAttachmentFrame').forEach((frame) => {
+      const name = frame.getAttribute('data-attachment-name') || frame.dataset.attachmentName || '附件';
+      const type = frame.getAttribute('data-attachment-type') || frame.dataset.attachmentType || '';
+      const size = Number(frame.getAttribute('data-attachment-size') || frame.dataset.attachmentSize || 0);
+      const kind = getAttachmentKind(name, type);
+      const label = kind === 'pdf' ? 'PDF' : kind === 'word' ? 'Word' : kind === 'excel' ? 'Excel' : kind === 'video' ? 'Video' : '文件';
+      frame.replaceWith(document.createTextNode(`\n[${label}] ${name}${size ? ` (${formatFileSize(size)})` : ''}\n`));
+    });
+    clone.querySelectorAll('img').forEach((image) => {
+      const alt = image.getAttribute('alt') || '图片';
+      image.replaceWith(document.createTextNode(`\n[${alt}]\n`));
+    });
+    return (clone.textContent || '')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  async function getEditorSelectionClipboardPayload(range) {
+    const fragment = range.cloneContents();
+    const container = document.createElement('div');
+    container.appendChild(fragment);
+    container.querySelectorAll('.editorImageResizeHandle').forEach((element) => element.remove());
+    clearTransientEditorSelectionClasses(container);
+    container.querySelectorAll('video[data-editor-src]').forEach((element) => {
+      const editorSrc = element.getAttribute('data-editor-src');
+      if (editorSrc && !isStoredAssetUrl(editorSrc)) {
+        element.setAttribute('src', editorSrc);
+      }
+      element.removeAttribute('data-object-url');
+    });
+    await resolveClipboardImageSources(container);
+    await resolveClipboardAttachmentUrls(container);
+
+    const imageSources = Array.from(container.querySelectorAll('img[src]'))
+      .map((image) => image.getAttribute('src') || '')
+      .filter((src) => src.startsWith('data:image/'));
+    const imageBlob = imageSources.length === 1
+      ? await imageDataUrlToPngBlob(imageSources[0]).catch(() => null)
+      : null;
+
+    return {
+      html: container.innerHTML,
+      text: getEditorClipboardPlainText(container),
+      imageBlob,
+    };
+  }
+
+  function isInternalEditorClipboardHtml(html = '') {
+    return /(?:editorImageFrame|editorVideoFrame|editorAttachmentFrame|data-editor-src|data-attachment-url)/.test(html);
+  }
+
+  function normalizeInternalEditorClipboardHtml(html = '') {
+    const container = document.createElement('div');
+    container.innerHTML = html;
+    container.querySelectorAll('script, style, link, meta').forEach((element) => element.remove());
+    container.querySelectorAll('.editorImageResizeHandle').forEach((element) => element.remove());
+    clearTransientEditorSelectionClasses(container);
+    container.querySelectorAll('[contenteditable]').forEach((element) => {
+      if (element.matches('.editorImageFrame, .editorVideoFrame, .editorAttachmentFrame')) {
+        element.setAttribute('contenteditable', 'false');
+      }
+    });
+    return container.innerHTML;
+  }
+
+  function insertEditorHtmlAtSelection(html) {
+    if (!editorRef.current) return false;
+    const range = ensureEditorInsertionRange();
+    if (!range) return false;
+
+    const container = document.createElement('div');
+    container.innerHTML = normalizeInternalEditorClipboardHtml(html);
+    const fragment = document.createDocumentFragment();
+    let lastInsertedNode = null;
+    while (container.firstChild) {
+      lastInsertedNode = container.firstChild;
+      fragment.appendChild(container.firstChild);
+    }
+    if (!lastInsertedNode) return false;
+
+    range.deleteContents();
+    range.insertNode(fragment);
+    prepareEditorImages();
+    prepareEditorVideos();
+    prepareEditorAttachments();
+
+    const selection = window.getSelection();
+    const nextRange = document.createRange();
+    nextRange.setStartAfter(lastInsertedNode);
+    nextRange.collapse(true);
+    selection?.removeAllRanges();
+    selection?.addRange(nextRange);
+    editorSelectionRef.current = nextRange.cloneRange();
+    syncEditorContent();
+    return true;
+  }
+
+  async function copyEditorSelection() {
+    const range = getSavedEditorSelectionRange();
+    if (!range) {
+      window.alert('请先选中要复制的内容');
+      return false;
+    }
+
+    const selection = window.getSelection();
+    try {
+      editorRef.current?.focus();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+
+      const { html, text, imageBlob } = await getEditorSelectionClipboardPayload(range);
+      if (navigator.clipboard?.write && window.ClipboardItem && html) {
+        const clipboardPayload = {
+          'text/html': new Blob([html], { type: 'text/html' }),
+          'text/plain': new Blob([text], { type: 'text/plain' }),
+        };
+        if (imageBlob) {
+          clipboardPayload['image/png'] = imageBlob;
+        }
+        try {
+          await navigator.clipboard.write([
+            new window.ClipboardItem(clipboardPayload),
+          ]);
+        } catch (writeError) {
+          if (!imageBlob) throw writeError;
+          await navigator.clipboard.write([
+            new window.ClipboardItem({
+              'text/html': clipboardPayload['text/html'],
+              'text/plain': clipboardPayload['text/plain'],
+            }),
+          ]);
+        }
+        return true;
+      }
+
+      if (navigator.clipboard?.writeText && text) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+
+      if (document.execCommand('copy')) {
+        return true;
+      }
+    } catch (error) {
+      console.warn('Failed to copy editor selection', error);
+      try {
+        if (document.execCommand('copy')) {
+          return true;
+        }
+      } catch (fallbackError) {
+        console.warn('Fallback editor copy failed', fallbackError);
+      }
+    } finally {
+      saveEditorSelection();
+    }
+
+    window.alert('复制失败，请使用 Ctrl+C 复制选中内容');
+    return false;
   }
 
   function ensureEditorInsertionRange() {
@@ -2223,6 +2673,14 @@ function App() {
   }
 
   function applyEditorCommand(command, value = null) {
+    if (command === 'undo') {
+      undoEditorChange();
+      return;
+    }
+    if (command === 'redo') {
+      redoEditorChange();
+      return;
+    }
     restoreEditorSelection();
     document.execCommand(command, false, value);
     syncEditorContent();
@@ -2278,6 +2736,39 @@ function App() {
     clearActiveEditorImage();
     clearActiveEditorAttachment();
     clearActiveEditorVideo();
+  }
+
+  function getClosestEditorObject(target) {
+    const frame = target?.closest?.('.editorImageFrame, .editorVideoFrame, .editorAttachmentFrame');
+    return frame && editorRef.current?.contains(frame) ? frame : null;
+  }
+
+  function isEditorObjectElement(element) {
+    return element instanceof HTMLElement
+      && element.matches('.editorImageFrame, .editorVideoFrame, .editorAttachmentFrame');
+  }
+
+  function isRangeSelectingSingleEditorObject(range) {
+    if (!range || range.collapsed) return false;
+    const fragment = range.cloneContents();
+    const meaningfulNodes = Array.from(fragment.childNodes).filter((node) => (
+      node.nodeType !== Node.TEXT_NODE || Boolean(node.textContent?.trim())
+    ));
+    return meaningfulNodes.length === 1 && isEditorObjectElement(meaningfulNodes[0]);
+  }
+
+  function selectEditorObject(frame) {
+    if (!frame || !editorRef.current?.contains(frame)) return false;
+    clearActiveEditorObjects();
+    frame.classList.add('active');
+
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNode(frame);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    editorSelectionRef.current = range.cloneRange();
+    return true;
   }
 
   function makeImageNonDraggable(image) {
@@ -2811,8 +3302,7 @@ function App() {
     range.collapse(true);
     selection?.removeAllRanges();
     selection?.addRange(range);
-    clearActiveEditorObjects();
-    frame.classList.add('active');
+    selectEditorObject(frame);
     syncEditorContent();
     saveEditorSelection();
   }
@@ -2934,8 +3424,7 @@ function App() {
     range.collapse(true);
     selection?.removeAllRanges();
     selection?.addRange(range);
-    clearActiveEditorObjects();
-    frame.classList.add('active');
+    selectEditorObject(frame);
     if (sync) syncEditorContent();
     saveEditorSelection();
   }
@@ -3132,8 +3621,7 @@ function App() {
     range.collapse(true);
     selection?.removeAllRanges();
     selection?.addRange(range);
-    clearActiveEditorImage();
-    frame.classList.add('active');
+    selectEditorObject(frame);
     if (sync) syncEditorContent();
     saveEditorSelection();
   }
@@ -3175,26 +3663,22 @@ function App() {
   function handleEditorClick(event) {
     const attachmentFrame = event.target.closest?.('.editorAttachmentFrame');
     if (attachmentFrame && editorRef.current?.contains(attachmentFrame)) {
-      clearActiveEditorObjects();
-      attachmentFrame.classList.add('active');
-      if (getAttachmentKind(attachmentFrame.dataset.attachmentName ?? '', attachmentFrame.dataset.attachmentType ?? '') === 'video') {
-        event.preventDefault();
-        openEditorAttachmentPreview(attachmentFrame);
-      }
+      event.preventDefault();
+      selectEditorObject(attachmentFrame);
       return;
     }
 
     const imageFrame = event.target.closest?.('.editorImageFrame');
     if (imageFrame && editorRef.current?.contains(imageFrame)) {
-      clearActiveEditorObjects();
-      imageFrame.classList.add('active');
+      event.preventDefault();
+      selectEditorObject(imageFrame);
       return;
     }
 
     const videoFrame = event.target.closest?.('.editorVideoFrame');
     if (videoFrame && editorRef.current?.contains(videoFrame)) {
-      clearActiveEditorObjects();
-      videoFrame.classList.add('active');
+      event.preventDefault();
+      selectEditorObject(videoFrame);
       return;
     }
     clearActiveEditorObjects();
@@ -3311,8 +3795,6 @@ function App() {
 
     marker.replaceWith(frame);
     imageDropMarkerRef.current = null;
-    clearActiveEditorImage();
-    frame.classList.add('active');
 
     const selection = window.getSelection();
     const range = document.createRange();
@@ -3321,7 +3803,7 @@ function App() {
     selection?.removeAllRanges();
     selection?.addRange(range);
 
-    saveEditorSelection();
+    selectEditorObject(frame);
     syncEditorContent();
     return true;
   }
@@ -3467,8 +3949,7 @@ function App() {
       if (!frame) return;
 
       event.preventDefault();
-      clearActiveEditorImage();
-      frame.classList.add('active');
+      selectEditorObject(frame);
 
       const startX = event.clientX;
       const startWidth = frame.getBoundingClientRect().width;
@@ -3507,8 +3988,7 @@ function App() {
     if (!frame || !editorRef.current?.contains(frame)) return;
 
     event.preventDefault();
-    clearActiveEditorImage();
-    frame.classList.add('active');
+    selectEditorObject(frame);
     beginCustomImageDrag(frame, event);
   }
 
@@ -3739,6 +4219,13 @@ function App() {
       return;
     }
 
+    const clipboardHtml = event.clipboardData?.getData('text/html') || '';
+    if (clipboardHtml && isInternalEditorClipboardHtml(clipboardHtml)) {
+      if (insertEditorHtmlAtSelection(clipboardHtml)) {
+        return;
+      }
+    }
+
     // Fallback: paste as text
     const clipboardText = event.clipboardData?.getData('text/plain');
     if (!clipboardText || !editorRef.current) return;
@@ -3851,6 +4338,19 @@ function App() {
   }
 
   function handleEditorKeyDown(event) {
+    const isEditorUndo = (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'z';
+    const isEditorRedo = (event.ctrlKey || event.metaKey) && !event.altKey
+      && (event.key.toLowerCase() === 'y' || (event.shiftKey && event.key.toLowerCase() === 'z'));
+    if (isEditorUndo || isEditorRedo) {
+      event.preventDefault();
+      if (isEditorRedo) {
+        redoEditorChange();
+      } else {
+        undoEditorChange();
+      }
+      return;
+    }
+
     // Escape cancels format painter
     if (event.key === 'Escape' && formatPainterRef.current) {
       formatPainterRef.current = null;
@@ -4136,11 +4636,14 @@ function App() {
             <div className="conversationBody">
               <div className="editorShell">
                 <div className="editorToolbar">
-                  <button type="button" className="toolbarIconButton" onMouseDown={(event) => event.preventDefault()} onClick={() => applyEditorCommand('undo')} title="撤销">
+                  <button type="button" className="toolbarIconButton" onMouseDown={(event) => event.preventDefault()} onClick={undoEditorChange} title="撤销">
                     <Undo2 size={16} />
                   </button>
-                  <button type="button" className="toolbarIconButton" onMouseDown={(event) => event.preventDefault()} onClick={() => applyEditorCommand('redo')} title="重做">
+                  <button type="button" className="toolbarIconButton" onMouseDown={(event) => event.preventDefault()} onClick={redoEditorChange} title="重做">
                     <Redo2 size={16} />
+                  </button>
+                  <button type="button" className="toolbarIconButton" onMouseDown={(event) => event.preventDefault()} onClick={copyEditorSelection} title="复制选中内容">
+                    <Copy size={16} />
                   </button>
                   <span />
                   <button type="button" className="toolbarIconButton" onMouseDown={(event) => event.preventDefault()} onClick={() => applyEditorCommand('bold')} title="加粗">
@@ -4722,6 +5225,30 @@ function App() {
               <Send size={15} />
               分发到其他客户
             </button>
+            {contextMenu.hasSelection && (
+              <button
+                className="contextMenuItem"
+                onClick={() => {
+                  closeContextMenu();
+                  copyEditorSelection();
+                }}
+              >
+                <Copy size={15} />
+                复制选中内容
+              </button>
+            )}
+            {contextMenu.hasAttachments && (
+              <button
+                className="contextMenuItem"
+                onClick={() => {
+                  closeContextMenu();
+                  downloadSelectedEditorAttachments();
+                }}
+              >
+                <Download size={15} />
+                下载选中文档
+              </button>
+            )}
             {!contextMenu.hasSelection && (
               <div className="contextMenuHint">未选中文本，将仅创建空工作流</div>
             )}

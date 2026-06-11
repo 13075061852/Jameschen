@@ -1714,7 +1714,7 @@ button {
   -webkit-user-drag: none;
   cursor: grab;
   contain: layout style;
-  transition: box-shadow 140ms ease, opacity 140ms ease;
+  transition: box-shadow 140ms ease, outline-color 140ms ease, opacity 140ms ease;
 }
 
 .messyContent .editorImageFrame img {
@@ -1728,16 +1728,35 @@ button {
 }
 
 .messyContent .editorImageFrame.active {
-  outline: 2px solid #111111;
-  outline-offset: 2px;
+  outline: 2px solid #2563eb;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.16);
+}
+
+.messyContent .editorImageFrame.rangeSelected {
+  outline: 2px solid #6366f1;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.18);
+}
+
+.messyContent .editorImageFrame.rangeSelected::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  background: rgba(99, 102, 241, 0.16);
+  pointer-events: none;
 }
 
 .messyContent .editorVideoFrame {
+  position: relative;
   width: min(520px, 100%);
   margin: 6px 0;
   display: block;
   line-height: 1.2;
   user-select: none;
+  cursor: pointer;
+  transition: box-shadow 140ms ease, outline-color 140ms ease;
 }
 
 .messyContent .editorVideoFrame video {
@@ -1749,8 +1768,24 @@ button {
 }
 
 .messyContent .editorVideoFrame.active {
-  outline: 2px solid #111111;
-  outline-offset: 2px;
+  outline: 2px solid #2563eb;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.16);
+}
+
+.messyContent .editorVideoFrame.rangeSelected {
+  outline: 2px solid #6366f1;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.18);
+}
+
+.messyContent .editorVideoFrame.rangeSelected::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  background: rgba(99, 102, 241, 0.14);
+  pointer-events: none;
 }
 
 .editorVideoCaption {
@@ -1830,6 +1865,7 @@ button {
 }
 
 .messyContent .editorAttachmentFrame {
+  position: relative;
   max-width: min(360px, 100%);
   min-height: 46px;
   margin: 4px 4px 4px 0;
@@ -1844,11 +1880,23 @@ button {
   background: rgba(255, 255, 255, 0.92);
   user-select: none;
   cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease, outline-color 140ms ease;
 }
 
 .messyContent .editorAttachmentFrame.active {
-  outline: 2px solid #111111;
-  outline-offset: 2px;
+  border-color: rgba(37, 99, 235, 0.55);
+  outline: 2px solid #2563eb;
+  outline-offset: 3px;
+  background: #eff6ff;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.14);
+}
+
+.messyContent .editorAttachmentFrame.rangeSelected {
+  border-color: rgba(99, 102, 241, 0.58);
+  outline: 2px solid #6366f1;
+  outline-offset: 3px;
+  background: #eef2ff;
+  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.16);
 }
 
 .editorAttachmentIcon {
