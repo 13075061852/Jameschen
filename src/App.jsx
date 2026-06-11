@@ -965,13 +965,14 @@ function App() {
     : selectedWorkflow;
   const renderWorkflowEditorSection = (item, extraClass = '') => {
     const content = trimWorkflowHtmlEdges(normalizeWorkflowDocumentContent(item.documentContent ?? item.content ?? ''));
+    const showMeta = !extraClass.includes('singleWorkflowSection');
     return [
       `<section class="mergedWorkflowSection${extraClass ? ` ${extraClass}` : ''}" data-workflow-id="${item.id}">`,
-      `<div class="mergedWorkflowMeta" contenteditable="false">`,
-      `<span>${escapeHtml(item.date ?? '')}</span>`,
-      `<span>${escapeHtml(item.title ?? item.content ?? '沟通记录')}</span>`,
-      `<span class="statusTag status${item.status}">${escapeHtml(item.status ?? '')}</span>`,
-      `</div>`,
+      showMeta ? `<div class="mergedWorkflowMeta" contenteditable="false">` +
+      `<span>${escapeHtml(item.date ?? '')}</span>` +
+      `<span>${escapeHtml(item.title ?? item.content ?? '沟通记录')}</span>` +
+      `<span class="statusTag status${item.status}">${escapeHtml(item.status ?? '')}</span>` +
+      `</div>` : '',
       `<div class="mergedWorkflowBody" contenteditable="true">${toEditorHtml(content)}</div>`,
       `</section>`,
     ].join('');
@@ -1797,6 +1798,9 @@ function App() {
     const contentHtml = mentionSourceHtml;
     const contentText = getPlainTextFromHtml(contentHtml).trim();
     const today = new Date().toISOString().slice(0, 10);
+    const now = new Date();
+    const stamp = now.toLocaleString('zh-CN', { hour12: false });
+    const timestampHtml = `<div class="editorTimestampBlock" data-undeletable="true" contenteditable="false">${stamp}</div><div>&#x200b;</div>`;
 
     commitCustomersFromUpdater((currentCustomers) =>
       currentCustomers.map((customer) => {
@@ -1806,8 +1810,10 @@ function App() {
           date: today,
           title,
           content: contentText || title,
-          documentContent: contentHtml,
+          documentContent: timestampHtml + contentHtml,
           status: '跟进中',
+          createdAt: now.toISOString(),
+          lastEditedAt: now.toISOString(),
         };
         return {
           ...customer,
@@ -2356,15 +2362,12 @@ function App() {
     const stamp = now.toLocaleString('zh-CN', { hour12: false });
     const content = contentText || title;
     const shouldMoveDraftIntoNewWorkflow = !selectedWorkflow && !isMergedWorkflowView;
-
-    // Prepend a timestamp block to new workflow content so the workflow
-    // never starts with empty/transient content that could be lost.
-    let documentContent = '';
-    if (shouldMoveDraftIntoNewWorkflow) {
-      const timestampHtml = `<div class="editorTimestampBlock" contenteditable="false">${stamp}</div><div>&#x200b;</div>`;
-      documentContent = timestampHtml + contentHtml;
-    }
-
+    // Prepend an undeletable timestamp to every new workflow so content
+    // typed after it is always properly persisted.
+    const timestampHtml = `<div class="editorTimestampBlock" data-undeletable="true" contenteditable="false">${stamp}</div><div>&#x200b;</div>`;
+    const documentContent = shouldMoveDraftIntoNewWorkflow
+      ? timestampHtml + contentHtml
+      : timestampHtml;
     const item = {
       id: `t-${Date.now()}`,
       date,
@@ -2373,7 +2376,7 @@ function App() {
       documentContent,
       status: '跟进中',
       createdAt: now.toISOString(),
-      lastEditedAt: shouldMoveDraftIntoNewWorkflow ? now.toISOString() : '',
+      lastEditedAt: now.toISOString(),
     };
     const nextNote = `${selectedCustomer.messyNotes ? `${selectedCustomer.messyNotes}\n\n` : ''}[${stamp}] ${title}\n${content}`;
     updateCustomer(selectedCustomer.id, {
@@ -2387,6 +2390,9 @@ function App() {
     }
     setEditingWorkflowTitleId('');
     setNoteTitleDraft('');
+    // Force persist the new workflow data immediately so subsequent edits
+    // have a stable base to save against, preventing content loss on refresh.
+    flushCustomersSave();
   }
 
   function updateEditorContent(value) {
@@ -4848,10 +4854,52 @@ function App() {
     if (event.key === ' ' || event.key === 'Enter') {
       setTimeout(() => {
         autoLinkifyAtCursor();
-        if (event.key === 'Enter') {
-          saveCurrentEditorContent();
-        }
       }, 0);
+      if (event.key === 'Enter') {
+        // Force a full save cycle on Enter (same path as insertEditorTimestamp)
+        // to ensure multi-line content is always persisted.
+        setTimeout(() => {
+          syncEditorContentAndFlushSave();
+        }, 0);
+      }
+    }
+
+    // Prevent deletion of the automatic first timestamp block.
+    if ((event.key === 'Backspace' || event.key === 'Delete') && editorRef.current) {
+      const undeletableTs = editorRef.current.querySelector('[data-undeletable="true"]');
+      if (undeletableTs && editorRef.current.contains(undeletableTs)) {
+        const sel = window.getSelection();
+        if (sel?.rangeCount) {
+          const range = sel.getRangeAt(0);
+          if (range.collapsed) {
+            const container = range.commonAncestorContainer;
+            // Backspace at start of the element right after the timestamp
+            if (event.key === 'Backspace') {
+              const next = undeletableTs.nextSibling;
+              if (next && (container === next || container.parentNode === next) && range.startOffset === 0) {
+                event.preventDefault();
+                return;
+              }
+            }
+            // Delete at end of the element right before the timestamp
+            if (event.key === 'Delete') {
+              const prev = undeletableTs.previousSibling;
+              if (prev && (container === prev || container.parentNode === prev) && range.startOffset === (container.textContent?.length ?? 0)) {
+                event.preventDefault();
+                return;
+              }
+            }
+          } else {
+            // Non-collapsed selection that includes the timestamp
+            const tempDiv = document.createElement('div');
+            tempDiv.appendChild(range.cloneContents());
+            if (tempDiv.querySelector('[data-undeletable="true"]')) {
+              event.preventDefault();
+              return;
+            }
+          }
+        }
+      }
     }
 
     if (event.key !== 'Delete' && event.key !== 'Backspace') return;
@@ -5246,6 +5294,9 @@ function App() {
                     onChange={handleEditorAttachmentSelected}
                   />
                 </div>
+                {isMergedWorkflowView && (
+                  <style>{`.mergedViewContent [data-undeletable="true"] { display: none !important; }`}</style>
+                )}
                 <div
                   key={editorKey}
                   ref={editorRef}
