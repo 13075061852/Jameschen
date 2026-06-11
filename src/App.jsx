@@ -1833,13 +1833,14 @@ function App() {
     container.innerHTML = toEditorHtml(html);
 
     // Resolve dbasset: URLs in <img> tags
-    const images = Array.from(container.querySelectorAll('img[src]'));
+    const images = Array.from(container.querySelectorAll('img[src], img[data-editor-src]'));
     const imgResolutions = images.map(async (img) => {
-      const src = img.getAttribute('src') || '';
+      const src = img.getAttribute('data-editor-src') || img.getAttribute('src') || '';
       if (!isStoredAssetUrl(src)) return;
       try {
         const dataUrl = await resolveStoredAssetDataUrl(src);
         img.setAttribute('src', dataUrl);
+        img.removeAttribute('data-editor-src');
       } catch (error) {
         console.warn('Failed to resolve image asset for export', error);
         img.alt = '图片加载失败';
@@ -1847,13 +1848,14 @@ function App() {
       }
     });
 
-    const videos = Array.from(container.querySelectorAll('video[src]'));
+    const videos = Array.from(container.querySelectorAll('video[src], video[data-editor-src]'));
     const videoResolutions = videos.map(async (video) => {
-      const src = video.getAttribute('src') || '';
+      const src = video.getAttribute('data-editor-src') || video.getAttribute('src') || '';
       if (!isStoredAssetUrl(src)) return;
       try {
         const dataUrl = await resolveStoredAssetDataUrl(src);
         video.setAttribute('src', dataUrl);
+        video.removeAttribute('data-editor-src');
       } catch (error) {
         console.warn('Failed to resolve video asset for export', error);
         video.removeAttribute('src');
@@ -2170,11 +2172,21 @@ function App() {
     if (!editorRef.current) return '';
     const clonedEditor = editorRef.current.cloneNode(true);
     clonedEditor.querySelectorAll('img[data-editor-src]').forEach((image) => {
-      image.setAttribute('src', image.getAttribute('data-editor-src'));
+      const editorSrc = image.getAttribute('data-editor-src') || '';
+      if (isStoredAssetUrl(editorSrc)) {
+        image.removeAttribute('src');
+      } else if (editorSrc) {
+        image.setAttribute('src', editorSrc);
+      }
       image.removeAttribute('data-object-url');
     });
     clonedEditor.querySelectorAll('video[data-editor-src]').forEach((video) => {
-      video.setAttribute('src', video.getAttribute('data-editor-src'));
+      const editorSrc = video.getAttribute('data-editor-src') || '';
+      if (isStoredAssetUrl(editorSrc)) {
+        video.removeAttribute('src');
+      } else if (editorSrc) {
+        video.setAttribute('src', editorSrc);
+      }
       video.removeAttribute('data-object-url');
     });
     clearTransientEditorSelectionClasses(clonedEditor);
@@ -2587,10 +2599,12 @@ function App() {
     return true;
   }
 
-  async function copyEditorSelection() {
+  async function copyEditorSelection({ silent = false } = {}) {
     const range = getSavedEditorSelectionRange();
     if (!range) {
-      window.alert('请先选中要复制的内容');
+      if (!silent) {
+        window.alert('请先选中要复制的内容');
+      }
       return false;
     }
 
@@ -2828,6 +2842,11 @@ function App() {
     editorRef.current.querySelectorAll('video').forEach((video) => {
       if (video.closest('.editorAttachmentFrame')) return;
       const existingFrame = video.closest('.editorVideoFrame');
+      const rawSrc = video.getAttribute('src') || '';
+      if (isStoredAssetUrl(rawSrc)) {
+        video.dataset.editorSrc = rawSrc;
+        video.removeAttribute('src');
+      }
       const url = video.dataset.editorSrc || video.getAttribute('src') || '';
       if (url) {
         const frame = createAttachmentFrame({
@@ -2889,6 +2908,11 @@ function App() {
       makeImageNonDraggable(image);
       image.loading = 'lazy';
       image.decoding = 'async';
+      const rawSrc = image.getAttribute('src') || '';
+      if (isStoredAssetUrl(rawSrc)) {
+        image.dataset.editorSrc = rawSrc;
+        image.removeAttribute('src');
+      }
       const storedSrc = image.dataset.editorSrc || image.getAttribute('src') || '';
       if (isStoredAssetUrl(storedSrc)) {
         image.dataset.editorSrc = storedSrc;
@@ -2938,6 +2962,21 @@ function App() {
     });
   }
 
+  function prepareEditorStoredAssetSources() {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.querySelectorAll('img[src], video[src]').forEach((element) => {
+      const src = element.getAttribute('src') || '';
+      if (isStoredAssetUrl(src)) {
+        element.setAttribute('data-editor-src', src);
+        element.removeAttribute('src');
+      }
+    });
+    prepareEditorImages();
+    prepareEditorVideos();
+    prepareEditorAttachments();
+  }
+
   function clearNestedEditorStyles(container, styleKeys) {
     container.querySelectorAll('[style]').forEach((element) => {
       styleKeys.forEach((key) => {
@@ -2951,8 +2990,15 @@ function App() {
 
   function applyStyleToNestedEditorElements(container, style) {
     container.querySelectorAll('span, font, b, strong, i, em, u, a').forEach((element) => {
+      if (element.closest('.editorImageFrame, .editorVideoFrame, .editorAttachmentFrame')) return;
       Object.assign(element.style, style);
     });
+  }
+
+  function selectionContainsEditorObject(range) {
+    if (!range || range.collapsed) return false;
+    const fragment = range.cloneContents();
+    return Boolean(fragment.querySelector?.('.editorImageFrame, .editorVideoFrame, .editorAttachmentFrame'));
   }
 
   function stripInlineFormatting(container) {
@@ -3067,6 +3113,12 @@ function App() {
     const selection = window.getSelection();
     if (!selection?.rangeCount) return;
     const range = selection.getRangeAt(0);
+    if (selectionContainsEditorObject(range)) {
+      window.alert('请只选中文字后再使用文字颜色或背景高亮');
+      prepareEditorStoredAssetSources();
+      saveEditorSelection();
+      return;
+    }
     if (range.collapsed) {
       document.execCommand('styleWithCSS', false, true);
       if (style.color) {
@@ -3075,6 +3127,7 @@ function App() {
       if (style.backgroundColor) {
         document.execCommand('hiliteColor', false, style.backgroundColor);
       }
+      prepareEditorStoredAssetSources();
       saveEditorSelection();
       return;
     }
@@ -3104,6 +3157,7 @@ function App() {
     const nextRange = document.createRange();
     nextRange.selectNodeContents(styledSpan);
     selection.addRange(nextRange);
+    prepareEditorStoredAssetSources();
     saveEditorSelection();
     syncEditorContent();
   }
@@ -4338,6 +4392,16 @@ function App() {
   }
 
   function handleEditorKeyDown(event) {
+    const isEditorCopy = (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'c';
+    if (isEditorCopy) {
+      saveEditorSelection();
+      if (getSavedEditorSelectionRange()) {
+        event.preventDefault();
+        copyEditorSelection({ silent: true });
+      }
+      return;
+    }
+
     const isEditorUndo = (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'z';
     const isEditorRedo = (event.ctrlKey || event.metaKey) && !event.altKey
       && (event.key.toLowerCase() === 'y' || (event.shiftKey && event.key.toLowerCase() === 'z'));
