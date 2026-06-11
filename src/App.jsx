@@ -18,6 +18,7 @@ import {
   AlignLeft,
   AlignRight,
   Bold,
+  Check,
   ChevronsLeft,
   ChevronsRight,
   ChevronDown,
@@ -25,6 +26,7 @@ import {
   ChevronRight,
   Clock3,
   Copy,
+  CornerDownRight,
   Database,
   Download,
   Eraser,
@@ -903,6 +905,9 @@ function App() {
   const [mentionSelectedIds, setMentionSelectedIds] = useState([]);
   const [mentionWorkflowTitle, setMentionWorkflowTitle] = useState('');
   const [mentionSourceHtml, setMentionSourceHtml] = useState('');
+  // Per-customer distribution target: customerId -> workflowId ('' = create new workflow)
+  const [mentionTargets, setMentionTargets] = useState({});
+  const [mentionFocusedCustomerId, setMentionFocusedCustomerId] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
   const [activeEditorFontSize, setActiveEditorFontSize] = useState('');
   const [activeEditorFontFamily, setActiveEditorFontFamily] = useState('');
@@ -1748,6 +1753,45 @@ function App() {
     setNoteTitleDraft('');
   }
 
+  function createMentionCustomer(name) {
+    const id = `c-${Date.now()}`;
+    const today = new Date().toISOString().slice(0, 10);
+    const companyName = name.trim() || '新客户';
+    const nextCustomer = {
+      id,
+      serialNumber: String((customersRef.current?.length ?? 0) + 1),
+      pinned: false,
+      company: companyName,
+      grade: 'C',
+      country: '',
+      website: '',
+      contact: '',
+      email: '',
+      phone: '',
+      fax: '',
+      otherContact: '',
+      remark: '',
+      backup1: '',
+      backup2: '',
+      backup3: '',
+      backup4: '',
+      lastFollowDate: today,
+      reminderDays: '30',
+      messyNotes: '',
+      timeline: [],
+    };
+    const nextCustomers = [nextCustomer, ...(customersRef.current ?? [])];
+    commitCustomers(nextCustomers, true);
+    // Auto-select the new customer for distribution
+    setMentionSelectedIds((current) => [...current, id]);
+    setMentionQuery('');
+    // Set a brief timeout so the new customer appears in the filtered list before we scroll to it
+    setTimeout(() => {
+      document.getElementById(`mention-${id}`)?.scrollIntoView?.({ block: 'nearest' });
+    }, 60);
+    return id;
+  }
+
   function openMentionPopup() {
     // Save current editor content first
     saveCurrentEditorContent();
@@ -1767,6 +1811,8 @@ function App() {
     setMentionQuery('');
     setMentionSelectedIds([]);
     setMentionWorkflowTitle('');
+    setMentionTargets({});
+    setMentionFocusedCustomerId(null);
     setMentionOpen(true);
   }
 
@@ -1805,6 +1851,32 @@ function App() {
     commitCustomersFromUpdater((currentCustomers) =>
       currentCustomers.map((customer) => {
         if (!mentionSelectedIds.includes(customer.id)) return customer;
+
+        const timeline = customer.timeline ?? [];
+        const targetWorkflowId = mentionTargets[customer.id] || '';
+        const targetExists = targetWorkflowId
+          && timeline.some((entry) => entry.id === targetWorkflowId);
+
+        // Append the distributed content to an existing workflow if one was chosen.
+        if (targetExists) {
+          return {
+            ...customer,
+            lastFollowDate: today,
+            timeline: timeline.map((entry) => {
+              if (entry.id !== targetWorkflowId) return entry;
+              const appendedDocument = `${entry.documentContent ?? ''}${timestampHtml}${contentHtml}`;
+              const appendedText = [entry.content, contentText].filter(Boolean).join('\n');
+              return {
+                ...entry,
+                content: appendedText || entry.content,
+                documentContent: appendedDocument,
+                lastEditedAt: now.toISOString(),
+              };
+            }),
+          };
+        }
+
+        // Otherwise create a new workflow as before.
         const item = {
           id: `t-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           date: today,
@@ -1818,7 +1890,7 @@ function App() {
         return {
           ...customer,
           lastFollowDate: today,
-          timeline: [item, ...(customer.timeline ?? [])],
+          timeline: [item, ...timeline],
         };
       })
     );
@@ -1828,6 +1900,7 @@ function App() {
     setMentionSelectedIds([]);
     setMentionWorkflowTitle('');
     setMentionSourceHtml('');
+    setMentionTargets({});
     setNoteTitleDraft('');
   }
 
@@ -5677,79 +5750,172 @@ function App() {
       {mentionOpen && (
         <div className="confirmOverlay" role="presentation" onMouseDown={() => setMentionOpen(false)}>
           <div className="mentionDialog" role="dialog" aria-modal="true" aria-labelledby="mentionDialogTitle" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="mentionHeader">
-              <h3 id="mentionDialogTitle">分发到多个客户</h3>
-              {mentionSourceHtml ? (
-                <div className="mentionSourcePreview">
-                  <span className="mentionSourceLabel">选中内容预览</span>
-                  <div className="mentionSourceContent" dangerouslySetInnerHTML={{ __html: mentionSourceHtml }} />
-                </div>
-              ) : (
-                <span className="mentionSourceHint mentionNoSelection">未选中任何文本，将仅创建空工作流</span>
-              )}
-            </div>
-            <div className="mentionSearch">
-              <Search size={16} />
-              <input
-                value={mentionQuery}
-                onChange={(event) => setMentionQuery(event.target.value)}
-                placeholder="搜索客户..."
-                autoFocus
-              />
-            </div>
-            <div className="mentionCustomerList">
-              {filteredMentionCustomers.length === 0 ? (
-                <div className="mentionEmpty">没有匹配的客户</div>
-              ) : (
-                filteredMentionCustomers.map((customer) => (
-                  <label key={customer.id} className={`mentionCustomerRow ${mentionSelectedIds.includes(customer.id) ? 'checked' : ''} ${customer.id === selectedCustomer?.id ? 'isSelf' : ''}`}>
-                    <input
-                      type="checkbox"
-                      checked={mentionSelectedIds.includes(customer.id)}
-                      onChange={() => {
-                        setMentionSelectedIds((current) =>
-                          current.includes(customer.id)
-                            ? current.filter((id) => id !== customer.id)
-                            : [...current, customer.id]
-                        );
-                      }}
-                    />
-                    <BrandLogo company={customer.company} />
-                    <div className="mentionCustomerInfo">
-                      <strong>{customer.company || '未命名客户'}</strong>
-                      <span>{[customer.contact, customer.country].filter(Boolean).join(' · ') || '无详细信息'}</span>
+              <div className="mentionHeader">
+                <h3 id="mentionDialogTitle">分发到多个客户</h3>
+                {mentionSourceHtml ? (
+                  <div className="mentionSourcePreview">
+                    <span className="mentionSourceLabel">选中内容预览</span>
+                    <div className="mentionSourceContent" dangerouslySetInnerHTML={{ __html: mentionSourceHtml }} />
+                  </div>
+                ) : (
+                  <span className="mentionSourceHint mentionNoSelection">未选中任何文本，将仅创建空工作流</span>
+                )}
+              </div>
+              <div className="mentionSearch">
+                <Search size={16} />
+                <input
+                  value={mentionQuery}
+                  onChange={(event) => setMentionQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && mentionQuery.trim() && filteredMentionCustomers.length === 0) {
+                      createMentionCustomer(mentionQuery.trim());
+                    }
+                  }}
+                  placeholder="搜索客户..."
+                  autoFocus
+                />
+              </div>
+              <div className="mentionCustomerList">
+                {filteredMentionCustomers.length === 0 ? (
+                  mentionQuery.trim() ? (
+                    <div className="mentionEmpty">
+                      没有匹配的客户
+                      <button
+                        className="mentionCreateButton"
+                        onClick={() => createMentionCustomer(mentionQuery.trim())}
+                      >
+                        <Plus size={14} />
+                        创建「{mentionQuery.trim()}」
+                      </button>
                     </div>
-                    <GradeBadge grade={customer.grade} />
-                    {customer.id === selectedCustomer?.id && <span className="selfBadge">我</span>}
-                  </label>
-                ))
-              )}
-            </div>
-            <div className="mentionWorkflowInput">
-              <input
-                value={mentionWorkflowTitle}
-                onChange={(event) => setMentionWorkflowTitle(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && mentionSelectedIds.length > 0) {
-                    confirmMentionDistribute();
-                  }
-                }}
-                placeholder={mentionSourceHtml ? '输入工作流名称（选填）' : '输入工作流名称'}
-              />
-            </div>
-            <div className="mentionActions">
-              <button className="confirmCancel" onClick={() => setMentionOpen(false)}>取消</button>
-              <button
-                className="confirmDanger"
-                onClick={confirmMentionDistribute}
-                disabled={mentionSelectedIds.length === 0}
-              >
-                分发到 {mentionSelectedIds.length} 个客户
-              </button>
-            </div>
+                  ) : (
+                    <div className="mentionEmpty">没有客户数据</div>
+                  )
+                ) : (
+                  filteredMentionCustomers.map((customer) => {
+                    const isChecked = mentionSelectedIds.includes(customer.id);
+                    const targetWorkflowId = mentionTargets[customer.id] || '';
+                    const targetWorkflow = targetWorkflowId
+                      ? (customer.timeline ?? []).find((w) => w.id === targetWorkflowId)
+                      : null;
+                    const toggleCheck = () => {
+                      setMentionSelectedIds((current) =>
+                        current.includes(customer.id)
+                          ? current.filter((id) => id !== customer.id)
+                          : [...current, customer.id]
+                      );
+                    };
+                    return (
+                      <div key={customer.id} id={`mention-${customer.id}`} className={`mentionCustomerRow ${isChecked ? 'checked' : ''} ${customer.id === selectedCustomer?.id ? 'isSelf' : ''}`}>
+                        <div className="mentionCustomerMain" onClick={toggleCheck}>
+                          <input type="checkbox" checked={isChecked} readOnly />
+                          <BrandLogo company={customer.company} />
+                          <div className="mentionCustomerInfo">
+                            <strong>{customer.company || '未命名客户'}</strong>
+                            <span>{[customer.contact, customer.country].filter(Boolean).join(' · ') || '无详细信息'}</span>
+                          </div>
+                          <GradeBadge grade={customer.grade} />
+                          {customer.id === selectedCustomer?.id && <span className="selfBadge">我</span>}
+                        </div>
+                        {isChecked && (
+                          <button
+                            type="button"
+                            className="mentionWorkflowTargetBtn"
+                            onClick={(e) => { e.stopPropagation(); setMentionFocusedCustomerId(customer.id); }}
+                          >
+                            <CornerDownRight size={13} />
+                            <span>
+                              {targetWorkflow
+                                ? `${targetWorkflow.title || '未命名'}${targetWorkflow.date ? ` · ${targetWorkflow.date}` : ''}`
+                                : '新建工作流'}
+                            </span>
+                            <ChevronRight size={14} />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+              <div className="mentionWorkflowInput">
+                <input
+                  value={mentionWorkflowTitle}
+                  onChange={(event) => setMentionWorkflowTitle(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && mentionSelectedIds.length > 0) {
+                      confirmMentionDistribute();
+                    }
+                  }}
+                  placeholder={mentionSourceHtml ? '输入工作流名称（选填）' : '输入工作流名称'}
+                />
+              </div>
+              <div className="mentionActions">
+                <button className="confirmCancel" onClick={() => setMentionOpen(false)}>取消</button>
+                <button
+                  className="confirmDanger"
+                  onClick={confirmMentionDistribute}
+                  disabled={mentionSelectedIds.length === 0}
+                >
+                  分发到 {mentionSelectedIds.length} 个客户
+                </button>
+              </div>
           </div>
         </div>
       )}
+
+      {/* 右侧弹窗：为该客户选择追加到哪个工作流 */}
+      {mentionOpen && mentionFocusedCustomerId && (() => {
+        const focusedCustomer = customers.find((c) => c.id === mentionFocusedCustomerId);
+        if (!focusedCustomer) return null;
+        const focusedTargetId = mentionTargets[mentionFocusedCustomerId] || '';
+        const focusedWorkflows = focusedCustomer.timeline ?? [];
+
+        return (
+        <div className="mentionWorkflowPickerOverlay" role="presentation" onMouseDown={() => setMentionFocusedCustomerId(null)}>
+          <div className="mentionWorkflowPickerDialog" role="dialog" aria-modal="true" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="mentionWorkflowPickerHeader">
+              <button type="button" className="mentionWorkflowPickerBack" onClick={() => setMentionFocusedCustomerId(null)}>
+                <ChevronLeft size={16} />
+              </button>
+              <div className="mentionWorkflowPickerCustomer">
+                <BrandLogo company={focusedCustomer.company} />
+                <strong>{focusedCustomer.company || '未命名客户'}</strong>
+              </div>
+            </div>
+            <div className="mentionWorkflowPickerList">
+              <button
+                type="button"
+                className={`mentionWorkflowPickerItem${focusedTargetId === '' ? ' selected' : ''}`}
+                onClick={() => { setMentionTargets((current) => ({ ...current, [focusedCustomer.id]: '' })); setMentionFocusedCustomerId(null); }}
+              >
+                <div className="mentionWorkflowPickerItemDot" />
+                <div className="mentionWorkflowPickerItemText">
+                  <strong>新建工作流</strong>
+                  <span>为此客户创建一条新的工作流记录</span>
+                </div>
+                {focusedTargetId === '' && <Check size={16} className="mentionWorkflowPickerCheck" />}
+              </button>
+              {focusedWorkflows.map((workflow) => (
+                <button
+                  key={workflow.id}
+                  type="button"
+                  className={`mentionWorkflowPickerItem${focusedTargetId === workflow.id ? ' selected' : ''}`}
+                  onClick={() => { setMentionTargets((current) => ({ ...current, [focusedCustomer.id]: workflow.id })); setMentionFocusedCustomerId(null); }}
+                >
+                  <div className="mentionWorkflowPickerItemDot" />
+                  <div className="mentionWorkflowPickerItemText">
+                    <strong>{workflow.title || '未命名工作流'}</strong>
+                    <span>{[workflow.date, workflow.status].filter(Boolean).join(' · ') || '暂无信息'}</span>
+                  </div>
+                  {focusedTargetId === workflow.id && <Check size={16} className="mentionWorkflowPickerCheck" />}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        );
+      })()}
+
       {contextMenu && (
         <div className="contextMenuOverlay" onClick={closeContextMenu} onContextMenu={(event) => { event.preventDefault(); closeContextMenu(); }}>
           <div

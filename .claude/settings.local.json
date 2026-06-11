@@ -3,7 +3,8 @@
     "allow": [
       "Bash(npx vite *)",
       "Bash(Get-ChildItem -Recurse -Name -File)",
-      "Bash(Select-Object -First 50)"
+      "Bash(Select-Object -First 50)",
+      "Bash(npm run *)"
     ]
   }
 }
