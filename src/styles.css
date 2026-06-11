@@ -1755,7 +1755,7 @@ button {
   display: block;
   line-height: 1.2;
   user-select: none;
-  cursor: pointer;
+  cursor: grab;
   transition: box-shadow 140ms ease, outline-color 140ms ease;
 }
 
@@ -1798,7 +1798,9 @@ button {
   white-space: nowrap;
 }
 
-.messyContent .editorImageFrame.dragging {
+.messyContent .editorImageFrame.dragging,
+.messyContent .editorVideoFrame.dragging,
+.messyContent .editorAttachmentFrame.dragging {
   cursor: grabbing;
   opacity: 0.72;
   transition: none;
@@ -1879,7 +1881,7 @@ button {
   color: #222222;
   background: rgba(255, 255, 255, 0.92);
   user-select: none;
-  cursor: pointer;
+  cursor: grab;
   transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease, outline-color 140ms ease;
 }
 
@@ -1887,16 +1889,20 @@ button {
   border-color: rgba(37, 99, 235, 0.55);
   outline: 2px solid #2563eb;
   outline-offset: 3px;
-  background: #eff6ff;
-  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.14);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: none;
 }
 
 .messyContent .editorAttachmentFrame.rangeSelected {
   border-color: rgba(99, 102, 241, 0.58);
   outline: 2px solid #6366f1;
   outline-offset: 3px;
-  background: #eef2ff;
-  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.16);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: none;
+}
+
+.messyContent span:has(.editorAttachmentFrame) {
+  background: transparent !important;
 }
 
 .editorAttachmentIcon {
@@ -3210,6 +3216,23 @@ button {
   display: block;
   border-radius: 6px;
   background: #000000;
+}
+
+.attachmentImagePreview {
+  width: 100%;
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: #111111;
+}
+
+.attachmentImagePreview img {
+  max-width: 100%;
+  max-height: calc(94vh - 112px);
+  display: block;
+  object-fit: contain;
+  border-radius: 6px;
 }
 
 .attachmentPreviewEmpty {

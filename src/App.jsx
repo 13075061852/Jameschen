@@ -97,6 +97,7 @@ const CUSTOMER_RENDER_INCREMENT = 80;
 const COLLAPSED_CUSTOMER_RENDER_LIMIT = 120;
 const STORED_ASSET_PREFIX = 'dbasset:';
 const EDITOR_HISTORY_LIMIT = 120;
+const EDITOR_DRAGGABLE_OBJECT_SELECTOR = '.editorImageFrame, .editorVideoFrame, .editorAttachmentFrame';
 
 const gradeMap = {
   A: '非常优质',
@@ -162,7 +163,10 @@ function stripAttachmentDataForLocalStorage(customers) {
     const container = document.createElement('div');
     container.innerHTML = toEditorHtml(content);
     container.querySelectorAll('.editorAttachmentFrame[data-attachment-url]').forEach((frame) => {
-      frame.setAttribute('data-attachment-url', '[附件-大数据已压缩]');
+      const url = frame.getAttribute('data-attachment-url') || '';
+      if (url.startsWith('data:')) {
+        frame.setAttribute('data-attachment-url', '[附件-大数据已压缩]');
+      }
     });
     return container.innerHTML;
   };
@@ -772,6 +776,7 @@ function App() {
   const imageDragLastEventRef = useRef(null);
   const editorSyncTimerRef = useRef(null);
   const editorDirtyRef = useRef(false);
+  const skipNextEditorSelectionSaveRef = useRef(false);
   const editorHistoryRef = useRef({
     undoStack: [],
     redoStack: [],
@@ -932,6 +937,10 @@ function App() {
   // out-of-bounds releases and formatting operations silently fail.
   useEffect(() => {
     function handleGlobalMouseUp() {
+      if (skipNextEditorSelectionSaveRef.current) {
+        skipNextEditorSelectionSaveRef.current = false;
+        return;
+      }
       saveEditorSelection();
     }
     document.addEventListener('mouseup', handleGlobalMouseUp);
@@ -958,6 +967,12 @@ function App() {
         const serialized = JSON.stringify(currentCustomers);
         if (serialized.length <= LOCAL_STORAGE_SAFE_CUSTOMER_SIZE) {
           localStorage.setItem(STORAGE_KEY, serialized);
+        } else {
+          const stripped = stripAttachmentDataForLocalStorage(currentCustomers);
+          const serializedStripped = JSON.stringify(stripped);
+          if (serializedStripped.length <= LOCAL_STORAGE_SAFE_CUSTOMER_SIZE) {
+            localStorage.setItem(STORAGE_KEY, serializedStripped);
+          }
         }
         localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify({
           leftCollapsed, rightCollapsed, leftPanelWidth, rightPanelWidth,
@@ -2312,6 +2327,11 @@ function App() {
     editorDirtyRef.current = false;
   }
 
+  function syncEditorContentAndFlushSave() {
+    syncEditorContent();
+    flushCustomersSave();
+  }
+
   function syncEditorContentDebounced() {
     editorDirtyRef.current = true;
     clearTimeout(editorSyncTimerRef.current);
@@ -2780,9 +2800,20 @@ function App() {
     const selection = window.getSelection();
     const range = document.createRange();
     range.selectNode(frame);
+    editorSelectionRef.current = range.cloneRange();
+
+    if (frame.classList.contains('editorAttachmentFrame')) {
+      const caretRange = document.createRange();
+      caretRange.setStartAfter(frame);
+      caretRange.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(caretRange);
+      skipNextEditorSelectionSaveRef.current = true;
+      return true;
+    }
+
     selection?.removeAllRanges();
     selection?.addRange(range);
-    editorSelectionRef.current = range.cloneRange();
     return true;
   }
 
@@ -2801,9 +2832,26 @@ function App() {
     frame.contentEditable = 'false';
     frame.draggable = false;
     frame.setAttribute('draggable', 'false');
+    clearAttachmentBackground(frame);
     const kind = getAttachmentKind(frame.dataset.attachmentName ?? '', frame.dataset.attachmentType ?? '');
     frame.classList.remove('attachmentPdf', 'attachmentWord', 'attachmentExcel', 'attachmentVideo', 'attachmentFile');
     frame.classList.add(`attachment${kind.charAt(0).toUpperCase()}${kind.slice(1)}`);
+  }
+
+  function clearAttachmentBackground(frame) {
+    if (!(frame instanceof HTMLElement)) return;
+    frame.style.background = '';
+    frame.style.backgroundColor = '';
+
+    const editor = editorRef.current;
+    let current = frame.parentElement;
+    while (current && current !== editor) {
+      if (current instanceof HTMLElement && current.querySelector?.('.editorAttachmentFrame')) {
+        current.style.background = '';
+        current.style.backgroundColor = '';
+      }
+      current = current.parentElement;
+    }
   }
 
   function stripStoredAssetSrcBeforeDomInsert(html) {
@@ -3393,6 +3441,7 @@ function App() {
 
     range.deleteContents();
     range.insertNode(frame);
+    clearAttachmentBackground(frame);
     range.setStartAfter(frame);
     range.collapse(true);
     selection?.removeAllRanges();
@@ -3404,7 +3453,7 @@ function App() {
       editorSelectionRef.current = range.cloneRange();
     }
     if (sync) syncEditorContent();
-    saveEditorSelection();
+    if (!selectInserted) saveEditorSelection();
   }
 
   const MAX_IMAGE_DIMENSION = 1200;
@@ -3561,7 +3610,7 @@ function App() {
         window.alert(`视频「${file.name}」读取失败，已跳过`);
       }
     }
-    syncEditorContent();
+    syncEditorContentAndFlushSave();
   }
 
   async function handleEditorAttachmentSelected(event) {
@@ -3595,6 +3644,7 @@ function App() {
         window.alert(`附件「${file.name}」读取失败，已跳过`);
       }
     }
+    syncEditorContentAndFlushSave();
   }
 
   async function openEditorAttachmentPreview(frame) {
@@ -3633,6 +3683,34 @@ function App() {
       setAttachmentPreview({ name, type, size, url: previewDataUrl, kind, status: 'unsupported' });
     } catch (error) {
       setAttachmentPreview({ name, type, size, url, kind, status: 'error', message: error instanceof Error ? error.message : '预览失败' });
+    }
+  }
+
+  async function openEditorImagePreview(frame) {
+    const image = frame?.querySelector?.('img');
+    if (!image) return;
+
+    const source = image.dataset.editorSrc || image.getAttribute('src') || '';
+    if (!source) return;
+
+    setAttachmentPreview({ name: image.alt || '图片预览', kind: 'image', url: source, status: 'loading' });
+
+    try {
+      const imageUrl = await resolveStoredAssetDataUrl(source);
+      setAttachmentPreview({
+        name: image.alt || '图片预览',
+        kind: 'image',
+        url: imageUrl,
+        status: 'ready',
+      });
+    } catch (error) {
+      setAttachmentPreview({
+        name: image.alt || '图片预览',
+        kind: 'image',
+        url: source,
+        status: 'error',
+        message: error instanceof Error ? error.message : '图片预览失败',
+      });
     }
   }
 
@@ -3762,7 +3840,7 @@ function App() {
         window.alert(`图片「${file.name}」读取失败，已跳过`);
       }
     }
-    syncEditorContent();
+    syncEditorContentAndFlushSave();
   }
 
   function handleEditorClick(event) {
@@ -3797,6 +3875,13 @@ function App() {
   }
 
   function handleEditorDoubleClick(event) {
+    const imageFrame = event.target.closest?.('.editorImageFrame');
+    if (imageFrame && editorRef.current?.contains(imageFrame)) {
+      event.preventDefault();
+      openEditorImagePreview(imageFrame);
+      return;
+    }
+
     const attachmentFrame = event.target.closest?.('.editorAttachmentFrame');
     if (!attachmentFrame || !editorRef.current?.contains(attachmentFrame)) return;
     event.preventDefault();
@@ -3877,8 +3962,8 @@ function App() {
       return true;
     }
     const targetFrame = range.startContainer?.nodeType === Node.ELEMENT_NODE
-      ? range.startContainer.closest?.('.editorImageFrame')
-      : range.startContainer?.parentElement?.closest?.('.editorImageFrame');
+      ? range.startContainer.closest?.(EDITOR_DRAGGABLE_OBJECT_SELECTOR)
+      : range.startContainer?.parentElement?.closest?.(EDITOR_DRAGGABLE_OBJECT_SELECTOR);
 
     if (targetFrame && targetFrame !== frame) {
       const targetRect = targetFrame.getBoundingClientRect();
@@ -3909,7 +3994,7 @@ function App() {
     selection?.addRange(range);
 
     selectEditorObject(frame);
-    syncEditorContent();
+    syncEditorContentAndFlushSave();
     return true;
   }
 
@@ -4089,7 +4174,7 @@ function App() {
       return;
     }
 
-    const frame = event.target.closest?.('.editorImageFrame');
+    const frame = event.target.closest?.(EDITOR_DRAGGABLE_OBJECT_SELECTOR);
     if (!frame || !editorRef.current?.contains(frame)) return;
 
     event.preventDefault();
@@ -5971,6 +6056,11 @@ function AttachmentPreviewDialog({ preview, onClose }) {
           {preview.status === 'ready' && preview.kind === 'video' && (
             <div className="attachmentVideoPreview">
               <video src={preview.previewUrl || preview.url} controls autoPlay />
+            </div>
+          )}
+          {preview.status === 'ready' && preview.kind === 'image' && (
+            <div className="attachmentImagePreview">
+              <img src={preview.url} alt={preview.name || '图片预览'} />
             </div>
           )}
           {preview.status === 'ready' && preview.kind === 'word' && (
