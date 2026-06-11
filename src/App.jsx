@@ -2356,12 +2356,21 @@ function App() {
     const stamp = now.toLocaleString('zh-CN', { hour12: false });
     const content = contentText || title;
     const shouldMoveDraftIntoNewWorkflow = !selectedWorkflow && !isMergedWorkflowView;
+
+    // Prepend a timestamp block to new workflow content so the workflow
+    // never starts with empty/transient content that could be lost.
+    let documentContent = '';
+    if (shouldMoveDraftIntoNewWorkflow) {
+      const timestampHtml = `<div class="editorTimestampBlock" contenteditable="false">${stamp}</div><div>&#x200b;</div>`;
+      documentContent = timestampHtml + contentHtml;
+    }
+
     const item = {
       id: `t-${Date.now()}`,
       date,
       title,
       content,
-      documentContent: shouldMoveDraftIntoNewWorkflow ? contentHtml : '',
+      documentContent,
       status: '跟进中',
       createdAt: now.toISOString(),
       lastEditedAt: shouldMoveDraftIntoNewWorkflow ? now.toISOString() : '',
