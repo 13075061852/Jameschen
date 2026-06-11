@@ -3035,6 +3035,33 @@ function App() {
     });
   }
 
+  function applyFormatStyleToTextNodes(container, style) {
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    const textNodes = [];
+    while (walker.nextNode()) {
+      textNodes.push(walker.currentNode);
+    }
+
+    textNodes.forEach((textNode) => {
+      if (!textNode.nodeValue) return;
+      const parent = textNode.parentNode;
+      if (!parent) return;
+      const fragment = document.createDocumentFragment();
+      const lines = textNode.nodeValue.split('\n');
+      lines.forEach((line, index) => {
+        if (index > 0) {
+          fragment.appendChild(document.createElement('br'));
+        }
+        if (!line) return;
+        const span = document.createElement('span');
+        Object.assign(span.style, style);
+        span.textContent = line;
+        fragment.appendChild(span);
+      });
+      parent.replaceChild(fragment, textNode);
+    });
+  }
+
   function collectFormattingFromElement(el, defaults, style) {
     const computed = window.getComputedStyle(el);
     const tag = el.tagName;
@@ -3188,18 +3215,20 @@ function App() {
     const tempContainer = document.createElement('span');
     tempContainer.appendChild(fragment);
     stripInlineFormatting(tempContainer);
+    applyFormatStyleToTextNodes(tempContainer, style);
 
-    // Wrap the cleaned content in a single span with the captured styles
-    const styledSpan = document.createElement('span');
-    Object.assign(styledSpan.style, style);
+    const styledFragment = document.createDocumentFragment();
+    let lastInsertedNode = null;
     while (tempContainer.firstChild) {
-      styledSpan.appendChild(tempContainer.firstChild);
+      lastInsertedNode = tempContainer.firstChild;
+      styledFragment.appendChild(tempContainer.firstChild);
     }
+    if (!lastInsertedNode) return;
 
-    range.insertNode(styledSpan);
+    range.insertNode(styledFragment);
     selection.removeAllRanges();
     const nextRange = document.createRange();
-    nextRange.setStartAfter(styledSpan);
+    nextRange.setStartAfter(lastInsertedNode);
     nextRange.collapse(true);
     selection.addRange(nextRange);
     syncEditorContent();
