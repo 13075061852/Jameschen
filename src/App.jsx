@@ -737,6 +737,9 @@ function normalizeWorkflowDocumentContent(value = '') {
   if (!value || typeof document === 'undefined') return value;
   const container = document.createElement('div');
   container.innerHTML = toEditorHtml(value);
+  container.querySelectorAll('.mergedFirstTimestampHidden').forEach((element) => {
+    element.classList.remove('mergedFirstTimestampHidden');
+  });
 
   const nestedBody = container.querySelector('.singleWorkflowSection .mergedWorkflowBody')
     || container.querySelector('.mergedWorkflowSection .mergedWorkflowBody');
@@ -745,6 +748,18 @@ function normalizeWorkflowDocumentContent(value = '') {
   }
 
   container.querySelectorAll('.mergedWorkflowMeta, .workflowTimestamps').forEach((element) => element.remove());
+  return container.innerHTML;
+}
+
+function hideFirstWorkflowTimestampForMergedView(value = '') {
+  if (!value || typeof document === 'undefined') return value;
+  const container = document.createElement('div');
+  container.innerHTML = toEditorHtml(value);
+  container.querySelectorAll('.mergedFirstTimestampHidden').forEach((element) => {
+    element.classList.remove('mergedFirstTimestampHidden');
+  });
+  const firstTimestamp = container.querySelector('.editorTimestampBlock');
+  firstTimestamp?.classList.add('mergedFirstTimestampHidden');
   return container.innerHTML;
 }
 
@@ -915,6 +930,7 @@ function App() {
   const boardRef = useRef(null);
   const editorRef = useRef(null);
   const editorSelectionRef = useRef(null);
+  const pendingMentionHtmlRef = useRef('');
   const imageInputRef = useRef(null);
   const videoInputRef = useRef(null);
   const attachmentInputRef = useRef(null);
@@ -934,6 +950,7 @@ function App() {
     isRestoring: false,
   });
   const workflowSelectionByCustomerRef = useRef(new Map());
+  const mergedWorkflowSelectionByCustomerRef = useRef(new Map());
   const customerSaveTimerRef = useRef(null);
   const editorObjectUrlsRef = useRef(new Set());
   const formatPainterRef = useRef(null);
@@ -967,6 +984,9 @@ function App() {
     : selectedWorkflow;
   const renderWorkflowEditorSection = (item, extraClass = '') => {
     const content = trimWorkflowHtmlEdges(normalizeWorkflowDocumentContent(item.documentContent ?? item.content ?? ''));
+    const bodyContent = isMergedWorkflowView
+      ? hideFirstWorkflowTimestampForMergedView(content)
+      : content;
     const showMeta = !extraClass.includes('singleWorkflowSection');
     return [
       `<section class="mergedWorkflowSection${extraClass ? ` ${extraClass}` : ''}" data-workflow-id="${item.id}">`,
@@ -975,7 +995,7 @@ function App() {
       `<span>${escapeHtml(item.title ?? item.content ?? '沟通记录')}</span>` +
       `<span class="statusTag status${item.status}">${escapeHtml(item.status ?? '')}</span>` +
       `</div>` : '',
-      `<div class="mergedWorkflowBody" contenteditable="true">${toEditorHtml(content)}</div>`,
+      `<div class="mergedWorkflowBody" contenteditable="true">${toEditorHtml(bodyContent)}</div>`,
       `</section>`,
     ].join('');
   };
@@ -1081,6 +1101,7 @@ function App() {
   useEffect(() => {
     if (!editorRef.current || !isMergedWorkflowView) return;
     editorRef.current.innerHTML = toEditorHtml(stripStoredAssetSrcBeforeDomInsert(editorContent));
+    prepareMergedWorkflowTimestampVisibility();
     prepareEditorImages();
     prepareEditorVideos();
     prepareEditorAttachments();
@@ -1264,6 +1285,7 @@ function App() {
       const nextSelectedWorkflowIds = selectedWorkflowIds.filter((item) => workflows.some((workflow) => workflow.id === item));
       if (nextSelectedWorkflowIds.length !== selectedWorkflowIds.length) {
         setSelectedWorkflowIds(nextSelectedWorkflowIds);
+        rememberMergedWorkflowSelectionForCustomer(selectedId, nextSelectedWorkflowIds);
       }
     }
 
@@ -1375,7 +1397,9 @@ function App() {
         const workflowId = section.getAttribute('data-workflow-id');
         const body = section.querySelector('.mergedWorkflowBody');
         if (workflowId && body) {
-          contentMap.set(workflowId, body.innerHTML);
+          const clonedBody = body.cloneNode(true);
+          clearTransientEditorSelectionClasses(clonedBody);
+          contentMap.set(workflowId, clonedBody.innerHTML);
         }
         return contentMap;
       }, new Map());
@@ -1414,7 +1438,9 @@ function App() {
       const workflowId = section.getAttribute('data-workflow-id');
       const body = section.querySelector('.mergedWorkflowBody');
       if (workflowId && body) {
-        contentMap.set(workflowId, body.innerHTML);
+        const clonedBody = body.cloneNode(true);
+        clearTransientEditorSelectionClasses(clonedBody);
+        contentMap.set(workflowId, clonedBody.innerHTML);
       }
       return contentMap;
     }, new Map());
@@ -1610,6 +1636,11 @@ function App() {
     }
   }
 
+  function rememberMergedWorkflowSelectionForCustomer(customerId = selectedId, workflowIds = selectedWorkflowIds) {
+    if (!customerId) return;
+    mergedWorkflowSelectionByCustomerRef.current.set(customerId, Array.isArray(workflowIds) ? workflowIds : []);
+  }
+
   function getRememberedWorkflowId(customerId, sourceCustomers = customersRef.current) {
     if (!customerId) return '';
     const workflows = sourceCustomers.find((customer) => customer.id === customerId)?.timeline ?? [];
@@ -1620,14 +1651,29 @@ function App() {
       : workflows[0]?.id ?? '';
   }
 
+  function getRememberedMergedWorkflowIds(customerId, sourceCustomers = customersRef.current) {
+    if (!customerId) return [];
+    const workflows = sourceCustomers.find((customer) => customer.id === customerId)?.timeline ?? [];
+    const workflowIds = workflows.map((workflow) => workflow.id);
+    if (workflowIds.length === 0) return [];
+    const rememberedIds = mergedWorkflowSelectionByCustomerRef.current.get(customerId);
+    if (!Array.isArray(rememberedIds)) return workflowIds;
+    const nextIds = rememberedIds.filter((id) => workflowIds.includes(id));
+    return nextIds.length > 0 ? nextIds : workflowIds;
+  }
+
   function selectCustomer(id) {
     const nextCustomers = saveCurrentEditorContent();
     rememberSelectedWorkflowForCustomer();
+    rememberMergedWorkflowSelectionForCustomer();
     const nextWorkflowId = getRememberedWorkflowId(id, nextCustomers);
+    const nextMergedWorkflowIds = workflowViewMode === 'merged'
+      ? getRememberedMergedWorkflowIds(id, nextCustomers)
+      : [];
     setSelectedId(id);
     setSelectedWorkflowId(nextWorkflowId);
-    setSelectedWorkflowIds([]);
-    saveViewState({ selectedId: id, selectedWorkflowId: nextWorkflowId, selectedWorkflowIds: [], workflowViewMode });
+    setSelectedWorkflowIds(nextMergedWorkflowIds);
+    saveViewState({ selectedId: id, selectedWorkflowId: nextWorkflowId, selectedWorkflowIds: nextMergedWorkflowIds, workflowViewMode });
     setEditingWorkflowTitleId('');
   }
 
@@ -1639,9 +1685,11 @@ function App() {
     const nextCustomers = saveCurrentEditorContent();
     if (mode === 'merged') {
       const nextCustomer = nextCustomers.find((customer) => customer.id === selectedCustomer?.id);
-      const nextSelectedIds = (nextCustomer?.timeline ?? []).map((workflow) => workflow.id);
+      const nextSelectedIds = getRememberedMergedWorkflowIds(selectedCustomer?.id, nextCustomers);
       setSelectedWorkflowIds(nextSelectedIds);
+      rememberMergedWorkflowSelectionForCustomer(selectedCustomer?.id, nextSelectedIds);
     } else {
+      rememberMergedWorkflowSelectionForCustomer();
       const nextCustomer = nextCustomers.find((customer) => customer.id === selectedCustomer?.id);
       const nextWorkflowId = focusedMergedWorkflowId
         || (selectedWorkflowIds.includes(selectedWorkflowId) ? selectedWorkflowId : '')
@@ -1674,9 +1722,12 @@ function App() {
     setSelectedWorkflowIds((current) => {
       if (current.includes(workflowId)) {
         const next = current.filter((item) => item !== workflowId);
+        rememberMergedWorkflowSelectionForCustomer(selectedId, next);
         return next;
       }
-      return [...current, workflowId];
+      const next = [...current, workflowId];
+      rememberMergedWorkflowSelectionForCustomer(selectedId, next);
+      return next;
     });
   }
 
@@ -1793,17 +1844,10 @@ function App() {
     // Save current editor content first
     saveCurrentEditorContent();
 
-    // Capture selected HTML from the saved editor selection (survives focus change)
-    // editorSelectionRef is a cloned Range saved on mouseup in the editor
-    let selectedHtml = '';
-    const range = editorSelectionRef.current;
-    if (range && !range.collapsed && editorRef.current) {
-      const fragment = range.cloneContents();
-      const temp = document.createElement('div');
-      temp.appendChild(fragment);
-      clearTransientEditorSelectionClasses(temp);
-      selectedHtml = temp.innerHTML;
-    }
+    // Prefer the HTML captured when the context menu opened. In merged view,
+    // clicking the menu can invalidate the live browser selection before this runs.
+    const selectedHtml = pendingMentionHtmlRef.current || getEditorSelectionHtml(editorSelectionRef.current);
+    pendingMentionHtmlRef.current = '';
     setMentionSourceHtml(selectedHtml);
     setMentionQuery('');
     setMentionSelectedIds([]);
@@ -1820,7 +1864,8 @@ function App() {
     if (targetObject && (!selectedRange || !rangeIntersectsNode(selectedRange, targetObject))) {
       selectEditorObject(targetObject);
     }
-    const hasSelection = Boolean(getSavedEditorSelectionRange());
+    pendingMentionHtmlRef.current = getEditorSelectionHtml(getSavedEditorSelectionRange());
+    const hasSelection = Boolean(pendingMentionHtmlRef.current);
     setContextMenu({
       x: event.clientX,
       y: event.clientY,
@@ -1843,6 +1888,8 @@ function App() {
     const now = new Date();
     const stamp = now.toLocaleString('zh-CN', { hour12: false });
     const timestampHtml = `<div class="editorTimestampBlock" data-undeletable="true" contenteditable="false">${stamp}</div><div>&#x200b;</div>`;
+    const appendedSelfTargets = [];
+    const createdSelfTargets = [];
 
     commitCustomersFromUpdater((currentCustomers) =>
       currentCustomers.map((customer) => {
@@ -1855,6 +1902,9 @@ function App() {
 
         // Append the distributed content to an existing workflow if one was chosen.
         if (targetExists) {
+          if (isMergedWorkflowView && customer.id === selectedCustomer?.id) {
+            appendedSelfTargets.push(targetWorkflowId);
+          }
           return {
             ...customer,
             lastFollowDate: today,
@@ -1883,6 +1933,9 @@ function App() {
           createdAt: now.toISOString(),
           lastEditedAt: now.toISOString(),
         };
+        if (isMergedWorkflowView && customer.id === selectedCustomer?.id) {
+          createdSelfTargets.push(item.id);
+        }
         return {
           ...customer,
           lastFollowDate: today,
@@ -1891,6 +1944,19 @@ function App() {
       })
     );
 
+    if (appendedSelfTargets.length > 0) {
+      appendMentionContentToMergedEditorTargets(appendedSelfTargets, timestampHtml, contentHtml);
+    }
+
+    if (createdSelfTargets.length > 0) {
+      setSelectedWorkflowId(createdSelfTargets[0]);
+      setSelectedWorkflowIds((current) => {
+        const next = [...createdSelfTargets, ...current.filter((id) => !createdSelfTargets.includes(id))];
+        rememberMergedWorkflowSelectionForCustomer(selectedCustomer?.id, next);
+        return next;
+      });
+    }
+
     setMentionOpen(false);
     setMentionQuery('');
     setMentionSelectedIds([]);
@@ -1898,6 +1964,21 @@ function App() {
     setMentionSourceHtml('');
     setMentionTargets({});
     setNoteTitleDraft('');
+  }
+
+  function appendMentionContentToMergedEditorTargets(workflowIds, timestampHtml, contentHtml) {
+    if (!editorRef.current || !Array.isArray(workflowIds) || workflowIds.length === 0) return;
+    workflowIds.forEach((workflowId) => {
+      const section = Array.from(editorRef.current.querySelectorAll('.mergedWorkflowSection'))
+        .find((item) => item.getAttribute('data-workflow-id') === workflowId);
+      const body = section?.querySelector('.mergedWorkflowBody');
+      if (!body) return;
+      body.insertAdjacentHTML('beforeend', `${timestampHtml}${contentHtml}`);
+    });
+    prepareMergedWorkflowTimestampVisibility();
+    const nextHtml = getEditorHtmlForSave();
+    editorHistoryRef.current.lastHtml = nextHtml;
+    editorDirtyRef.current = false;
   }
 
   function updateArchiveDraft(fieldKey, value) {
@@ -2688,8 +2769,27 @@ function App() {
   }
 
   function clearTransientEditorSelectionClasses(container) {
-    container.querySelectorAll('.editorImageFrame.active, .editorVideoFrame.active, .editorAttachmentFrame.active, .rangeSelected').forEach((element) => {
-      element.classList.remove('active', 'rangeSelected');
+    container.querySelectorAll('.editorImageFrame.active, .editorVideoFrame.active, .editorAttachmentFrame.active, .rangeSelected, .mergedFirstTimestampHidden').forEach((element) => {
+      element.classList.remove('active', 'rangeSelected', 'mergedFirstTimestampHidden');
+    });
+    container.querySelectorAll('.editorTimestampBlock').forEach((element) => {
+      element.style.removeProperty('display');
+    });
+  }
+
+  function prepareMergedWorkflowTimestampVisibility() {
+    if (!editorRef.current) return;
+    editorRef.current.querySelectorAll('.mergedWorkflowSection').forEach((section) => {
+      const timestamps = Array.from(section.querySelectorAll('.mergedWorkflowBody .editorTimestampBlock'));
+      timestamps.forEach((timestamp) => {
+        timestamp.classList.remove('mergedFirstTimestampHidden');
+        timestamp.style.setProperty('display', 'block', 'important');
+      });
+      const firstTimestamp = timestamps[0];
+      if (firstTimestamp) {
+        firstTimestamp.classList.add('mergedFirstTimestampHidden');
+        firstTimestamp.style.setProperty('display', 'none', 'important');
+      }
     });
   }
 
@@ -2725,6 +2825,16 @@ function App() {
     selection.removeAllRanges();
     selection.addRange(range);
     return true;
+  }
+
+  function getEditorSelectionHtml(range) {
+    const editor = editorRef.current;
+    if (!range || range.collapsed || !editor || !editor.contains(range.commonAncestorContainer)) return '';
+    const fragment = range.cloneContents();
+    const temp = document.createElement('div');
+    temp.appendChild(fragment);
+    clearTransientEditorSelectionClasses(temp);
+    return temp.innerHTML;
   }
 
   function getSavedEditorSelectionRange() {
@@ -5363,9 +5473,6 @@ function App() {
                     onChange={handleEditorAttachmentSelected}
                   />
                 </div>
-                {isMergedWorkflowView && (
-                  <style>{`.mergedViewContent [data-undeletable="true"] { display: none !important; }`}</style>
-                )}
                 <div
                   key={editorKey}
                   ref={editorRef}

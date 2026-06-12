@@ -1670,6 +1670,10 @@ button {
   user-select: none;
 }
 
+.mergedViewContent .mergedFirstTimestampHidden {
+  display: none !important;
+}
+
 .messyContent a {
   color: #2563eb;
   cursor: pointer;
