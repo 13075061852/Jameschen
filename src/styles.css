@@ -317,13 +317,17 @@ button {
 }
 
 .panelTitle > div {
+  flex: 1 1 auto;
   gap: 8px;
   min-width: 0;
+  overflow: hidden;
 }
 
 .panelTitle h2 {
+  flex: 0 1 auto;
   margin: 0;
   min-width: 0;
+  max-width: 42%;
   font-size: 15px;
   font-weight: 800;
   overflow: hidden;
@@ -355,8 +359,9 @@ button {
 }
 
 .panelTitleMeta {
+  flex: 1 1 auto;
   min-width: 0;
-  max-width: 180px;
+  max-width: min(58vw, 640px);
   padding-left: 10px;
   border-left: 1px solid rgba(0, 0, 0, 0.12);
   color: #0b7476;
@@ -377,6 +382,7 @@ button {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
+  flex-shrink: 0;
   gap: 8px;
 }
 
@@ -1746,12 +1752,20 @@ button {
   max-width: 100%;
   display: inline-block;
   vertical-align: top;
-  line-height: 0;
+  line-height: 1.65;
   user-select: none;
   -webkit-user-drag: none;
   cursor: grab;
   contain: layout style;
   transition: box-shadow 140ms ease, outline-color 140ms ease, opacity 140ms ease;
+}
+
+.messyContent .editorCaretAnchor {
+  display: inline-block;
+  width: 3px;
+  min-height: 1.65em;
+  line-height: 1.65;
+  vertical-align: top;
 }
 
 .messyContent .editorImageFrame img {

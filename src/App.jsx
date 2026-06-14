@@ -2775,6 +2775,7 @@ function App() {
     container.querySelectorAll('.editorImageFrame.active, .editorVideoFrame.active, .editorAttachmentFrame.active, .rangeSelected, .mergedFirstTimestampHidden').forEach((element) => {
       element.classList.remove('active', 'rangeSelected', 'mergedFirstTimestampHidden');
     });
+    container.querySelectorAll('.editorCaretAnchor').forEach((element) => element.remove());
     container.querySelectorAll('.editorTimestampBlock').forEach((element) => {
       element.style.removeProperty('display');
     });
@@ -3345,6 +3346,31 @@ function App() {
       frame.style.marginLeft = '0';
       frame.style.marginRight = '0';
     }
+    ensureEditorObjectCaretAnchors(frame);
+  }
+
+  function isEditorCaretAnchor(node) {
+    return node instanceof HTMLElement && node.classList.contains('editorCaretAnchor');
+  }
+
+  function createEditorCaretAnchor() {
+    const anchor = document.createElement('span');
+    anchor.className = 'editorCaretAnchor';
+    anchor.dataset.editorCaretAnchor = 'true';
+    anchor.appendChild(document.createTextNode('\u200b'));
+    return anchor;
+  }
+
+  function ensureEditorObjectCaretAnchors(frame) {
+    const parent = frame.parentNode;
+    if (!parent) return;
+
+    if (!isEditorCaretAnchor(frame.previousSibling)) {
+      parent.insertBefore(createEditorCaretAnchor(), frame);
+    }
+    if (!isEditorCaretAnchor(frame.nextSibling)) {
+      parent.insertBefore(createEditorCaretAnchor(), frame.nextSibling);
+    }
   }
 
   function prepareAttachmentFrame(frame) {
@@ -3512,6 +3538,7 @@ function App() {
       image.parentNode?.insertBefore(frame, image);
       frame.appendChild(image);
       frame.appendChild(handle);
+      ensureEditorObjectCaretAnchors(frame);
     });
   }
 
@@ -4152,6 +4179,7 @@ function App() {
 
     range.deleteContents();
     range.insertNode(frame);
+    ensureEditorObjectCaretAnchors(frame);
     range.setStartAfter(frame);
     range.collapse(true);
     selection?.removeAllRanges();
