@@ -1764,6 +1764,11 @@ button {
   -webkit-user-drag: none;
 }
 
+.messyContent .editorImageFrame img:not([src]),
+.messyContent .editorImageFrame img[data-loading-asset="true"] {
+  visibility: hidden;
+}
+
 .messyContent .editorImageFrame.active {
   outline: 2px solid #2563eb;
   outline-offset: 3px;

@@ -3357,7 +3357,7 @@ function App() {
     if (!editorRef.current) return;
     editorRef.current.querySelectorAll('img').forEach((image) => {
       makeImageNonDraggable(image);
-      image.loading = 'lazy';
+      image.loading = 'eager';
       image.decoding = 'async';
       const rawSrc = image.getAttribute('src') || '';
       if (isStoredAssetUrl(rawSrc)) {
@@ -3367,6 +3367,7 @@ function App() {
       const storedSrc = image.dataset.editorSrc || image.getAttribute('src') || '';
       if (isStoredAssetUrl(storedSrc)) {
         image.dataset.editorSrc = storedSrc;
+        image.dataset.loadingAsset = 'true';
         if (!image.dataset.objectUrl || image.getAttribute('src') === storedSrc) {
           resolveStoredAssetDataUrl(storedSrc)
             .then((dataUrl) => {
@@ -3379,10 +3380,12 @@ function App() {
               editorObjectUrlsRef.current.add(objectUrl);
               image.dataset.objectUrl = objectUrl;
               image.src = objectUrl;
+              image.removeAttribute('data-loading-asset');
             })
             .catch((error) => {
               console.warn('Failed to load stored image asset', error);
               image.alt = '图片资源加载失败';
+              image.removeAttribute('data-loading-asset');
             });
         }
       }
@@ -4225,9 +4228,10 @@ function App() {
 
     const image = document.createElement('img');
     image.dataset.editorSrc = src;
-    image.loading = 'lazy';
+    image.loading = 'eager';
     image.decoding = 'async';
     if (isStoredAssetUrl(src)) {
+      image.dataset.loadingAsset = 'true';
       resolveStoredAssetDataUrl(src)
         .then((dataUrl) => {
           if (!editorRef.current?.contains(image)) return;
@@ -4235,10 +4239,12 @@ function App() {
           editorObjectUrlsRef.current.add(objectUrl);
           image.dataset.objectUrl = objectUrl;
           image.src = objectUrl;
+          image.removeAttribute('data-loading-asset');
         })
         .catch((error) => {
           console.warn('Failed to load inserted image asset', error);
           image.alt = '图片资源加载失败';
+          image.removeAttribute('data-loading-asset');
         });
     } else {
       image.src = src;
