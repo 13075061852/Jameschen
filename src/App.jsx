@@ -2949,7 +2949,23 @@ function App() {
       const alt = image.getAttribute('alt') || '图片';
       image.replaceWith(document.createTextNode(`\n[${alt}]\n`));
     });
-    return (clone.textContent || '')
+
+    const blockTags = new Set(['ADDRESS', 'ARTICLE', 'ASIDE', 'BLOCKQUOTE', 'DIV', 'FIGCAPTION', 'FIGURE', 'FOOTER', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HEADER', 'LI', 'MAIN', 'NAV', 'OL', 'P', 'PRE', 'SECTION', 'TABLE', 'TR', 'UL']);
+    function readNodeText(node) {
+      if (node.nodeType === Node.TEXT_NODE) return node.textContent || '';
+      if (node.nodeType !== Node.ELEMENT_NODE) return '';
+
+      const element = node;
+      if (element.tagName === 'BR') return '\n';
+
+      let text = Array.from(element.childNodes).map(readNodeText).join('');
+      if (blockTags.has(element.tagName) && text && !text.endsWith('\n')) {
+        text += '\n';
+      }
+      return text;
+    }
+
+    return Array.from(clone.childNodes).map(readNodeText).join('')
       .replace(/[ \t]+\n/g, '\n')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
@@ -2995,11 +3011,38 @@ function App() {
     container.querySelectorAll('script, style, link, meta').forEach((element) => element.remove());
     container.querySelectorAll('.editorImageResizeHandle').forEach((element) => element.remove());
     clearTransientEditorSelectionClasses(container);
+    container.querySelectorAll('.editorImageFrame').forEach((frame) => {
+      if (frame.style.display === 'block' && frame.style.marginLeft !== 'auto') {
+        frame.style.display = 'inline-block';
+        frame.style.marginLeft = '0';
+        frame.style.marginRight = '0';
+      }
+    });
     container.querySelectorAll('[contenteditable]').forEach((element) => {
       if (element.matches('.editorImageFrame, .editorVideoFrame, .editorAttachmentFrame')) {
         element.setAttribute('contenteditable', 'false');
       }
     });
+
+    function getSingleEditorObject(node) {
+      const meaningfulNodes = Array.from(node.childNodes).filter((child) => (
+        child.nodeType !== Node.TEXT_NODE || Boolean(child.textContent?.trim())
+      ));
+      if (meaningfulNodes.length !== 1) return null;
+
+      const onlyNode = meaningfulNodes[0];
+      if (isEditorObjectElement(onlyNode)) return onlyNode;
+      if (onlyNode.nodeType === Node.ELEMENT_NODE) {
+        return getSingleEditorObject(onlyNode);
+      }
+      return null;
+    }
+
+    const singleEditorObject = getSingleEditorObject(container);
+    if (singleEditorObject) {
+      container.replaceChildren(singleEditorObject.cloneNode(true));
+    }
+
     return container.innerHTML;
   }
 
@@ -3198,6 +3241,62 @@ function App() {
       && element.matches('.editorImageFrame, .editorVideoFrame, .editorAttachmentFrame');
   }
 
+  function getEdgeEditorObject(node, direction) {
+    let current = node;
+    while (current) {
+      if (isEditorObjectElement(current)) return current;
+      if (current.nodeType === Node.TEXT_NODE) {
+        if ((current.textContent || '').replace(/\u200b/g, '').trim()) return null;
+      } else if (current.nodeType === Node.ELEMENT_NODE) {
+        const children = Array.from(current.childNodes);
+        if (children.length > 0) {
+          current = direction === 'previous' ? children.at(-1) : children[0];
+          continue;
+        }
+      }
+      return null;
+    }
+    return null;
+  }
+
+  function getSiblingEditorObjectFromCaret(range, direction) {
+    const editor = editorRef.current;
+    if (!editor || !range?.collapsed) return null;
+
+    let current = range.startContainer;
+    let sibling = null;
+
+    if (current.nodeType === Node.TEXT_NODE) {
+      const text = current.textContent || '';
+      const sideText = direction === 'previous'
+        ? text.slice(0, range.startOffset)
+        : text.slice(range.startOffset);
+      if (sideText.replace(/\u200b/g, '').trim()) return null;
+      sibling = direction === 'previous' ? current.previousSibling : current.nextSibling;
+    } else {
+      const childNodes = Array.from(current.childNodes || []);
+      sibling = direction === 'previous'
+        ? childNodes[range.startOffset - 1] || null
+        : childNodes[range.startOffset] || null;
+    }
+
+    while (current && current !== editor) {
+      while (sibling) {
+        const object = getEdgeEditorObject(sibling, direction);
+        if (object && editor.contains(object)) return object;
+        const hasMeaningfulText = sibling.nodeType === Node.TEXT_NODE
+          && Boolean((sibling.textContent || '').replace(/\u200b/g, '').trim());
+        if (hasMeaningfulText) return null;
+        sibling = direction === 'previous' ? sibling.previousSibling : sibling.nextSibling;
+      }
+      current = current.parentNode;
+      if (!current || current === editor) break;
+      sibling = direction === 'previous' ? current.previousSibling : current.nextSibling;
+    }
+
+    return null;
+  }
+
   function isRangeSelectingSingleEditorObject(range) {
     if (!range || range.collapsed) return false;
     const fragment = range.cloneContents();
@@ -3241,6 +3340,11 @@ function App() {
     frame.contentEditable = 'false';
     frame.draggable = false;
     frame.setAttribute('draggable', 'false');
+    if (frame.style.display === 'block' && frame.style.marginLeft !== 'auto') {
+      frame.style.display = 'inline-block';
+      frame.style.marginLeft = '0';
+      frame.style.marginRight = '0';
+    }
   }
 
   function prepareAttachmentFrame(frame) {
@@ -3367,8 +3471,8 @@ function App() {
       const storedSrc = image.dataset.editorSrc || image.getAttribute('src') || '';
       if (isStoredAssetUrl(storedSrc)) {
         image.dataset.editorSrc = storedSrc;
-        image.dataset.loadingAsset = 'true';
         if (!image.dataset.objectUrl || image.getAttribute('src') === storedSrc) {
+          image.dataset.loadingAsset = 'true';
           resolveStoredAssetDataUrl(storedSrc)
             .then((dataUrl) => {
               if (!editorRef.current?.contains(image)) return;
@@ -3387,6 +3491,8 @@ function App() {
               image.alt = '图片资源加载失败';
               image.removeAttribute('data-loading-asset');
             });
+        } else {
+          image.removeAttribute('data-loading-asset');
         }
       }
       const existingFrame = image.closest('.editorImageFrame');
@@ -4209,9 +4315,9 @@ function App() {
     const frame = getActiveEditorImageFrame();
     if (!frame) return;
 
-    frame.style.display = 'block';
+    frame.style.display = alignment === 'left' ? 'inline-block' : 'block';
     frame.style.marginLeft = alignment === 'right' || alignment === 'center' ? 'auto' : '0';
-    frame.style.marginRight = alignment === 'left' || alignment === 'center' ? 'auto' : '0';
+    frame.style.marginRight = alignment === 'center' ? 'auto' : '0';
     syncEditorContent();
   }
 
@@ -4795,6 +4901,13 @@ function App() {
   async function handleEditorPaste(event) {
     event.preventDefault();
 
+    const clipboardHtml = event.clipboardData?.getData('text/html') || '';
+    if (clipboardHtml && isInternalEditorClipboardHtml(clipboardHtml)) {
+      if (insertEditorHtmlAtSelection(clipboardHtml)) {
+        return;
+      }
+    }
+
     // Check for image in clipboard first
     const items = event.clipboardData?.items;
     const files = event.clipboardData?.files;
@@ -4887,13 +5000,6 @@ function App() {
       }
       syncEditorContentAndFlushSave();
       return;
-    }
-
-    const clipboardHtml = event.clipboardData?.getData('text/html') || '';
-    if (clipboardHtml && isInternalEditorClipboardHtml(clipboardHtml)) {
-      if (insertEditorHtmlAtSelection(clipboardHtml)) {
-        return;
-      }
     }
 
     // Fallback: paste as text
@@ -5093,10 +5199,35 @@ function App() {
     if (event.key !== 'Delete' && event.key !== 'Backspace') return;
 
     const activeObject = editorRef.current?.querySelector('.editorImageFrame.active, .editorVideoFrame.active, .editorAttachmentFrame.active');
-    if (!activeObject) return;
+    if (activeObject) {
+      event.preventDefault();
+      activeObject.remove();
+      syncEditorContent();
+      cleanupUnusedAssets(customersRef.current);
+      editorRef.current?.focus();
+      return;
+    }
+
+    const selection = window.getSelection();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    const adjacentObject = getSiblingEditorObjectFromCaret(
+      range,
+      event.key === 'Backspace' ? 'previous' : 'next',
+    );
+    if (!adjacentObject) return;
 
     event.preventDefault();
-    activeObject.remove();
+    const parent = adjacentObject.parentNode;
+    const nextOffset = parent ? Array.prototype.indexOf.call(parent.childNodes, adjacentObject) : 0;
+    adjacentObject.remove();
+    if (parent && editorRef.current?.contains(parent)) {
+      const nextRange = document.createRange();
+      nextRange.setStart(parent, Math.min(nextOffset, parent.childNodes.length));
+      nextRange.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(nextRange);
+      editorSelectionRef.current = nextRange.cloneRange();
+    }
     syncEditorContent();
     cleanupUnusedAssets(customersRef.current);
     editorRef.current?.focus();
