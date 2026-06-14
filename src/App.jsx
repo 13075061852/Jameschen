@@ -1033,6 +1033,9 @@ function App() {
   const selectedCustomerTitle = selectedCustomer
     ? (selectedCustomer.displayTitle || [selectedCustomer.company || '未命名用户', selectedCustomer.country].filter(Boolean).join(' · '))
     : '未命名用户';
+  const selectedWorkflowTitle = selectedWorkflow
+    ? selectedWorkflow.title ?? selectedWorkflow.content ?? '沟通记录'
+    : '';
 
   const filteredCustomers = useMemo(() => {
     return customers
@@ -5330,6 +5333,7 @@ function App() {
             title={selectedCustomerTitle}
             icon={<MessageSquareText size={18} />}
             editable
+            titleMeta={!isMergedWorkflowView && selectedWorkflowTitle ? selectedWorkflowTitle : ''}
             onTitleChange={(newTitle) => {
               if (selectedCustomer) {
                 updateCustomer(selectedCustomer.id, { displayTitle: newTitle });
@@ -6020,7 +6024,7 @@ function App() {
   );
 }
 
-function PanelTitle({ title, icon, meta, action, collapsed = false, onToggle, toggleIcon, toggleTitle, editable = false, onTitleChange }) {
+function PanelTitle({ title, icon, meta, titleMeta, action, collapsed = false, onToggle, toggleIcon, toggleTitle, editable = false, onTitleChange }) {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState(title);
 
@@ -6068,6 +6072,7 @@ function PanelTitle({ title, icon, meta, action, collapsed = false, onToggle, to
             {title}
           </h2>
         ))}
+        {titleMeta && <strong className="panelTitleMeta" title={titleMeta}>{titleMeta}</strong>}
       </div>
       {!collapsed && <span>{meta}</span>}
       {!collapsed && action}
