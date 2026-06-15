@@ -3914,6 +3914,17 @@ button {
   background: rgba(239, 252, 250, 0.82);
 }
 
+.calendarNavButton:disabled {
+  opacity: 0.36;
+  cursor: not-allowed;
+}
+
+.calendarNavButton:disabled:hover {
+  border-color: rgba(0, 0, 0, 0.14);
+  color: #222222;
+  background: rgba(255, 255, 255, 0.82);
+}
+
 .calendarMonthTitle {
   min-width: 0;
   display: flex;
@@ -4039,6 +4050,10 @@ button {
 .calendarDay.emptyDay {
   background: rgba(245, 245, 245, 0.52);
   pointer-events: none;
+}
+
+.calendarDay.futureDay {
+  background: rgba(248, 248, 248, 0.42);
 }
 
 .calendarDay.hasActivity {

@@ -1204,7 +1204,10 @@ function App() {
     () => makeCalendarDays(calendarMonth, calendarActivitiesByDate),
     [calendarActivitiesByDate, calendarMonth],
   );
-  const selectedDayActivities = calendarActivitiesByDate.get(selectedCalendarDate) ?? [];
+  const todayDate = formatLocalDate(new Date());
+  const selectedDayActivities = selectedCalendarDate > todayDate
+    ? []
+    : calendarActivitiesByDate.get(selectedCalendarDate) ?? [];
   const calendarMonthActivityCount = useMemo(() => (
     calendarDays.reduce((total, day) => total + (day?.activities.length ?? 0), 0)
   ), [calendarDays]);
@@ -5729,7 +5732,7 @@ function App() {
               days={calendarDays}
               selectedDate={selectedCalendarDate}
               selectedActivities={selectedDayActivities}
-              today={formatLocalDate(new Date())}
+              today={todayDate}
               onPrevMonth={() => {
                 const nextMonth = shiftMonth(calendarMonth, -1);
                 setCalendarMonth(nextMonth);
@@ -5737,8 +5740,9 @@ function App() {
               }}
               onNextMonth={() => {
                 const nextMonth = shiftMonth(calendarMonth, 1);
+                if (nextMonth > todayDate.slice(0, 7)) return;
                 setCalendarMonth(nextMonth);
-                setSelectedCalendarDate(`${nextMonth}-01`);
+                setSelectedCalendarDate(nextMonth === todayDate.slice(0, 7) ? todayDate : `${nextMonth}-01`);
               }}
               onToday={() => {
                 const today = formatLocalDate(new Date());
@@ -6433,6 +6437,7 @@ function CalendarView({
 }) {
   const weekDays = ['日', '一', '二', '三', '四', '五', '六'];
   const selectedDateLabel = selectedDate ? `${selectedDate.slice(5, 7)}月${selectedDate.slice(8, 10)}日` : '';
+  const canGoNextMonth = month < today.slice(0, 7);
   const [collapsedCustomerGroups, setCollapsedCustomerGroups] = useState(new Set());
   const [agendaWidth, setAgendaWidth] = useState(300);
   const [activeCalendarResize, setActiveCalendarResize] = useState(false);
@@ -6509,7 +6514,7 @@ function CalendarView({
           <strong>{getMonthLabel(month)}</strong>
           <span>{selectedDateLabel}</span>
         </div>
-        <button type="button" className="calendarNavButton" onClick={onNextMonth} title="下个月">
+        <button type="button" className="calendarNavButton" onClick={onNextMonth} title="下个月" disabled={!canGoNextMonth}>
           <ChevronRight size={17} />
         </button>
         <button type="button" className="calendarTodayButton" onClick={onToday}>
@@ -6531,6 +6536,7 @@ function CalendarView({
           <div className="calendarGrid">
             {days.map((day, index) => {
               if (!day) return <div key={`blank-${index}`} className="calendarDay emptyDay" />;
+              if (day.date > today) return <div key={day.date} className="calendarDay emptyDay futureDay" />;
               const isSelected = day.date === selectedDate;
               const isToday = day.date === today;
               const visibleActivities = day.activities.slice(0, 3);
