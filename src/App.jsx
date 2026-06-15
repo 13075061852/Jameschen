@@ -778,6 +778,21 @@ async function resolveStoredAssetDataUrl(url = '') {
   return asset.dataUrl;
 }
 
+async function resolveStoredAssetDataUrlWithRetry(url = '', retries = 2) {
+  let lastError = null;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await resolveStoredAssetDataUrl(url);
+    } catch (error) {
+      lastError = error;
+      if (attempt < retries) {
+        await new Promise((resolve) => setTimeout(resolve, 120 * (attempt + 1)));
+      }
+    }
+  }
+  throw lastError ?? new Error('资源不存在或已损坏');
+}
+
 function dataUrlToBlobUrl(dataUrl = '', fallbackType = 'application/octet-stream') {
   const type = dataUrl.match(/^data:([^;,]+)/)?.[1] || fallbackType;
   const arrayBuffer = dataUrlToArrayBuffer(dataUrl);
@@ -3746,7 +3761,7 @@ function App() {
         image.dataset.editorSrc = storedSrc;
         if (!image.dataset.objectUrl || image.getAttribute('src') === storedSrc) {
           image.dataset.loadingAsset = 'true';
-          resolveStoredAssetDataUrl(storedSrc)
+          resolveStoredAssetDataUrlWithRetry(storedSrc)
             .then((dataUrl) => {
               if (!editorRef.current?.contains(image)) return;
               if (image.dataset.objectUrl) {
@@ -3761,7 +3776,7 @@ function App() {
             })
             .catch((error) => {
               console.warn('Failed to load stored image asset', error);
-              image.alt = '图片资源加载失败';
+              image.alt = image.alt || '上传图片';
               image.removeAttribute('data-loading-asset');
             });
         } else {
@@ -4422,7 +4437,7 @@ function App() {
     video.setAttribute('draggable', 'false');
 
     if (isStoredAssetUrl(src)) {
-      resolveStoredAssetDataUrl(src)
+        resolveStoredAssetDataUrlWithRetry(src)
         .then((dataUrl) => {
           if (!editorRef.current?.contains(video)) return;
           const objectUrl = dataUrlToBlobUrl(dataUrl, file.type || 'video/mp4');
@@ -4574,7 +4589,7 @@ function App() {
     setAttachmentPreview({ name: image.alt || '图片预览', kind: 'image', url: source, status: 'loading' });
 
     try {
-      const imageUrl = await resolveStoredAssetDataUrl(source);
+      const imageUrl = await resolveStoredAssetDataUrlWithRetry(source);
       setAttachmentPreview({
         name: image.alt || '图片预览',
         kind: 'image',
@@ -4633,7 +4648,7 @@ function App() {
     image.decoding = 'async';
     if (isStoredAssetUrl(src)) {
       image.dataset.loadingAsset = 'true';
-      resolveStoredAssetDataUrl(src)
+      resolveStoredAssetDataUrlWithRetry(src)
         .then((dataUrl) => {
           if (!editorRef.current?.contains(image)) return;
           const objectUrl = dataUrlToBlobUrl(dataUrl, 'image/jpeg');
@@ -4653,7 +4668,7 @@ function App() {
     image.alt = '上传图片';
     image.addEventListener('error', function onImageError() {
       if (this.dataset.editorSrc && isStoredAssetUrl(this.dataset.editorSrc)) {
-        resolveStoredAssetDataUrl(this.dataset.editorSrc)
+        resolveStoredAssetDataUrlWithRetry(this.dataset.editorSrc)
           .then((dataUrl) => {
             if (!editorRef.current?.contains(this)) return;
             const objectUrl = dataUrlToBlobUrl(dataUrl, 'image/jpeg');
@@ -4662,7 +4677,7 @@ function App() {
             this.src = objectUrl;
           })
           .catch(() => {
-            this.alt = '图片加载失败';
+            this.alt = this.alt || '上传图片';
           });
       }
     });
