@@ -18,6 +18,7 @@ import {
   AlignLeft,
   AlignRight,
   Bold,
+  CalendarDays,
   ChevronsLeft,
   ChevronsRight,
   ChevronDown,
@@ -108,6 +109,118 @@ const gradeMap = {
 };
 
 const seedCustomers = [];
+
+function formatLocalDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function parseActivityDate(value = '') {
+  if (!value) return '';
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) return formatLocalDate(parsed);
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : '';
+}
+
+function getMonthLabel(monthKey = '') {
+  const [year, month] = monthKey.split('-');
+  if (!year || !month) return '';
+  return `${year}年${Number(month)}月`;
+}
+
+function shiftMonth(monthKey, offset) {
+  const [year, month] = monthKey.split('-').map(Number);
+  const date = new Date(year, (month || 1) - 1 + offset, 1);
+  return formatLocalDate(date).slice(0, 7);
+}
+
+function makeCalendarDays(monthKey, activitiesByDate) {
+  const [year, month] = monthKey.split('-').map(Number);
+  const firstDay = new Date(year, month - 1, 1);
+  const leadingDays = firstDay.getDay();
+  const totalDays = new Date(year, month, 0).getDate();
+  const cells = [];
+
+  for (let index = 0; index < leadingDays; index += 1) {
+    cells.push(null);
+  }
+
+  for (let day = 1; day <= totalDays; day += 1) {
+    const date = `${monthKey}-${String(day).padStart(2, '0')}`;
+    cells.push({
+      date,
+      day,
+      activities: activitiesByDate.get(date) ?? [],
+    });
+  }
+
+  while (cells.length % 7 !== 0) {
+    cells.push(null);
+  }
+
+  return cells;
+}
+
+function buildCalendarActivities(customers) {
+  const byDate = new Map();
+  const addActivity = (date, activity) => {
+    if (!date) return;
+    const current = byDate.get(date) ?? [];
+    const existing = current.find((item) => item.customerId === activity.customerId && item.workflowId === activity.workflowId);
+    if (existing) {
+      existing.types = Array.from(new Set([...existing.types, ...activity.types]));
+      existing.lastEditedAt = activity.lastEditedAt || existing.lastEditedAt;
+      return;
+    }
+    current.push(activity);
+    byDate.set(date, current);
+  };
+
+  customers.forEach((customer) => {
+    const customerTitle = customer.displayTitle || customer.company || customer.contact || '未命名用户';
+    (customer.timeline ?? []).forEach((workflow) => {
+      const createdDate = parseActivityDate(workflow.createdAt) || parseActivityDate(workflow.date);
+      const workflowDate = parseActivityDate(workflow.date) || createdDate;
+      const editedDate = parseActivityDate(workflow.lastEditedAt);
+      const title = workflow.title || workflow.content || '沟通记录';
+      const baseActivity = {
+        customerId: customer.id,
+        customerTitle,
+        workflowId: workflow.id,
+        workflowTitle: title,
+        status: workflow.status || '跟进中',
+        date: workflowDate,
+        createdAt: workflow.createdAt || '',
+        lastEditedAt: workflow.lastEditedAt || '',
+      };
+
+      addActivity(workflowDate, {
+        ...baseActivity,
+        types: ['笔记'],
+      });
+
+      if (editedDate && editedDate !== workflowDate) {
+        addActivity(editedDate, {
+          ...baseActivity,
+          types: ['修改'],
+        });
+      }
+    });
+  });
+
+  byDate.forEach((activities) => {
+    activities.sort((a, b) => {
+      const bTime = new Date(b.lastEditedAt || b.createdAt || b.date).getTime() || 0;
+      const aTime = new Date(a.lastEditedAt || a.createdAt || a.date).getTime() || 0;
+      return bTime - aTime;
+    });
+  });
+
+  return byDate;
+}
 
 const archiveFields = [
   ['company', '名字'],
@@ -384,6 +497,9 @@ function readInitialViewState() {
         selectedWorkflowId: '',
         selectedWorkflowIds: [],
         workflowViewMode: 'single',
+        mainView: 'workspace',
+        calendarMonth: formatLocalDate(new Date()).slice(0, 7),
+        selectedCalendarDate: formatLocalDate(new Date()),
       };
     }
     const parsed = JSON.parse(stored);
@@ -394,6 +510,13 @@ function readInitialViewState() {
         ? parsed.selectedWorkflowIds.filter((item) => typeof item === 'string')
         : [],
       workflowViewMode: parsed.workflowViewMode === 'merged' ? 'merged' : 'single',
+      mainView: parsed.mainView === 'calendar' ? 'calendar' : 'workspace',
+      calendarMonth: typeof parsed.calendarMonth === 'string' && /^\d{4}-\d{2}$/.test(parsed.calendarMonth)
+        ? parsed.calendarMonth
+        : formatLocalDate(new Date()).slice(0, 7),
+      selectedCalendarDate: typeof parsed.selectedCalendarDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(parsed.selectedCalendarDate)
+        ? parsed.selectedCalendarDate
+        : formatLocalDate(new Date()),
     };
   } catch {
     return {
@@ -401,12 +524,16 @@ function readInitialViewState() {
       selectedWorkflowId: '',
       selectedWorkflowIds: [],
       workflowViewMode: 'single',
+      mainView: 'workspace',
+      calendarMonth: formatLocalDate(new Date()).slice(0, 7),
+      selectedCalendarDate: formatLocalDate(new Date()),
     };
   }
 }
 
 function saveViewState(viewState) {
-  localStorage.setItem(VIEW_STATE_STORAGE_KEY, JSON.stringify(viewState));
+  const currentViewState = readInitialViewState();
+  localStorage.setItem(VIEW_STATE_STORAGE_KEY, JSON.stringify({ ...currentViewState, ...viewState }));
 }
 
 function readInitialGlobalFieldLabels() {
@@ -894,6 +1021,9 @@ function App() {
   const [selectedWorkflowId, setSelectedWorkflowId] = useState(() => initialViewState.selectedWorkflowId || '');
   const [selectedWorkflowIds, setSelectedWorkflowIds] = useState(() => initialViewState.selectedWorkflowIds || []);
   const [workflowViewMode, setWorkflowViewMode] = useState(() => initialViewState.workflowViewMode || 'single');
+  const [mainView, setMainView] = useState(() => initialViewState.mainView || 'workspace');
+  const [calendarMonth, setCalendarMonth] = useState(() => initialViewState.calendarMonth || formatLocalDate(new Date()).slice(0, 7));
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState(() => initialViewState.selectedCalendarDate || formatLocalDate(new Date()));
   const [query, setQuery] = useState('');
   const [gradeFilter, setGradeFilter] = useState('全部');
   const [customerRenderLimit, setCustomerRenderLimit] = useState(INITIAL_CUSTOMER_RENDER_LIMIT);
@@ -1069,6 +1199,19 @@ function App() {
     };
   }, [customers]);
 
+  const calendarActivitiesByDate = useMemo(() => buildCalendarActivities(customers), [customers]);
+  const calendarDays = useMemo(
+    () => makeCalendarDays(calendarMonth, calendarActivitiesByDate),
+    [calendarActivitiesByDate, calendarMonth],
+  );
+  const selectedDayActivities = calendarActivitiesByDate.get(selectedCalendarDate) ?? [];
+  const calendarMonthActivityCount = useMemo(() => (
+    calendarDays.reduce((total, day) => total + (day?.activities.length ?? 0), 0)
+  ), [calendarDays]);
+  const calendarMonthActiveDays = useMemo(() => (
+    calendarDays.filter((day) => (day?.activities.length ?? 0) > 0).length
+  ), [calendarDays]);
+
   const editorExpanded = leftCollapsed && rightCollapsed;
   const boardStyle = useMemo(() => ({
     gridTemplateColumns: `${leftCollapsed ? COLLAPSED_PANEL_WIDTH : leftPanelWidth}px ${RESIZER_WIDTH}px minmax(0, 1fr) ${RESIZER_WIDTH}px ${rightCollapsed ? COLLAPSED_PANEL_WIDTH : rightPanelWidth}px`,
@@ -1186,7 +1329,7 @@ function App() {
           leftCollapsed, rightCollapsed, leftPanelWidth, rightPanelWidth,
         }));
         localStorage.setItem(VIEW_STATE_STORAGE_KEY, JSON.stringify({
-          selectedId, selectedWorkflowId, selectedWorkflowIds, workflowViewMode,
+          selectedId, selectedWorkflowId, selectedWorkflowIds, workflowViewMode, mainView, calendarMonth, selectedCalendarDate,
         }));
         localStorage.setItem(GLOBAL_FIELD_LABELS_STORAGE_KEY, JSON.stringify(globalFieldLabels));
       } catch (error) {
@@ -1196,7 +1339,7 @@ function App() {
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [leftCollapsed, rightCollapsed, leftPanelWidth, rightPanelWidth,
-    selectedId, selectedWorkflowId, selectedWorkflowIds, workflowViewMode,
+    selectedId, selectedWorkflowId, selectedWorkflowIds, workflowViewMode, mainView, calendarMonth, selectedCalendarDate,
     globalFieldLabels]);
 
   useEffect(() => {
@@ -1263,8 +1406,8 @@ function App() {
   }, [leftCollapsed, rightCollapsed, leftPanelWidth, rightPanelWidth]);
 
   useEffect(() => {
-    saveViewState({ selectedId, selectedWorkflowId, selectedWorkflowIds, workflowViewMode });
-  }, [selectedId, selectedWorkflowId, selectedWorkflowIds, workflowViewMode]);
+    saveViewState({ selectedId, selectedWorkflowId, selectedWorkflowIds, workflowViewMode, mainView, calendarMonth, selectedCalendarDate });
+  }, [selectedId, selectedWorkflowId, selectedWorkflowIds, workflowViewMode, mainView, calendarMonth, selectedCalendarDate]);
 
   useEffect(() => {
     if (customers.length === 0) {
@@ -1484,7 +1627,7 @@ function App() {
   async function exportBackupData() {
     const backupCustomers = getCustomersWithCurrentEditorContent();
     const layout = { leftCollapsed, rightCollapsed, leftPanelWidth, rightPanelWidth };
-    const viewState = { selectedId, selectedWorkflowId, selectedWorkflowIds, workflowViewMode };
+    const viewState = { selectedId, selectedWorkflowId, selectedWorkflowIds, workflowViewMode, mainView, calendarMonth, selectedCalendarDate };
     const assetIds = collectAssetIdsFromCustomers(backupCustomers);
     const assets = await readAssetsForBackup(assetIds);
     const payload = {
@@ -1555,8 +1698,23 @@ function App() {
           ? payload.viewState.selectedWorkflowIds.filter((item) => typeof item === 'string')
           : [],
         workflowViewMode: payload.viewState.workflowViewMode === 'merged' ? 'merged' : 'single',
+        mainView: payload.viewState.mainView === 'calendar' ? 'calendar' : 'workspace',
+        calendarMonth: typeof payload.viewState.calendarMonth === 'string' && /^\d{4}-\d{2}$/.test(payload.viewState.calendarMonth)
+          ? payload.viewState.calendarMonth
+          : formatLocalDate(new Date()).slice(0, 7),
+        selectedCalendarDate: typeof payload.viewState.selectedCalendarDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(payload.viewState.selectedCalendarDate)
+          ? payload.viewState.selectedCalendarDate
+          : formatLocalDate(new Date()),
       }
-      : { selectedId: importedCustomers[0]?.id ?? '', selectedWorkflowId: '', selectedWorkflowIds: [], workflowViewMode: 'single' };
+      : {
+        selectedId: importedCustomers[0]?.id ?? '',
+        selectedWorkflowId: '',
+        selectedWorkflowIds: [],
+        workflowViewMode: 'single',
+        mainView: 'workspace',
+        calendarMonth: formatLocalDate(new Date()).slice(0, 7),
+        selectedCalendarDate: formatLocalDate(new Date()),
+      };
     const validSelectedId = importedCustomers.some((customer) => customer.id === importedViewState.selectedId)
       ? importedViewState.selectedId
       : importedCustomers[0]?.id ?? '';
@@ -1572,6 +1730,9 @@ function App() {
     setSelectedWorkflowId(importedViewState.selectedWorkflowId);
     setSelectedWorkflowIds(importedViewState.selectedWorkflowIds);
     setWorkflowViewMode(importedViewState.workflowViewMode);
+    setMainView(importedViewState.mainView);
+    setCalendarMonth(importedViewState.calendarMonth);
+    setSelectedCalendarDate(importedViewState.selectedCalendarDate);
     setEditorHydrationVersion((version) => version + 1);
     saveViewState({ ...importedViewState, selectedId: validSelectedId });
     setArchiveEditing(false);
@@ -1710,6 +1871,40 @@ function App() {
     saveCurrentEditorContent();
     rememberSelectedWorkflowForCustomer(selectedId, workflowId);
     setSelectedWorkflowId(workflowId);
+  }
+
+  function openCalendarActivity(activity) {
+    const nextCustomers = saveCurrentEditorContent();
+    rememberSelectedWorkflowForCustomer();
+    rememberMergedWorkflowSelectionForCustomer();
+    const targetCustomer = nextCustomers.find((customer) => customer.id === activity.customerId);
+    if (!targetCustomer) return;
+    const targetWorkflowId = targetCustomer.timeline?.some((workflow) => workflow.id === activity.workflowId)
+      ? activity.workflowId
+      : targetCustomer.timeline?.[0]?.id ?? '';
+
+    setMainView('workspace');
+    setWorkflowViewMode('single');
+    setSelectedId(activity.customerId);
+    setSelectedWorkflowId(targetWorkflowId);
+    setSelectedWorkflowIds([]);
+    rememberSelectedWorkflowForCustomer(activity.customerId, targetWorkflowId);
+    saveViewState({
+      selectedId: activity.customerId,
+      selectedWorkflowId: targetWorkflowId,
+      selectedWorkflowIds: [],
+      workflowViewMode: 'single',
+    });
+    setEditingWorkflowTitleId('');
+  }
+
+  function toggleMainView() {
+    if (mainView === 'calendar') {
+      setMainView('workspace');
+      return;
+    }
+    saveCurrentEditorContent();
+    setMainView('calendar');
   }
 
   function focusWorkflow(workflowId) {
@@ -5343,6 +5538,15 @@ function App() {
           </div>
         </div>
         <div className="topActions">
+          <button
+            type="button"
+            className={`topTextButton ${mainView === 'calendar' ? 'active' : ''}`}
+            title={mainView === 'calendar' ? '返回工作台' : '按日历查看记录'}
+            onClick={toggleMainView}
+          >
+            <CalendarDays size={19} />
+            <span>{mainView === 'calendar' ? '工作台' : '日历'}</span>
+          </button>
           <button type="button" className="topTextButton" title="导出工作流内容" onClick={() => setExportDialogOpen(true)}>
             <Download size={19} />
             <span>导出</span>
@@ -5495,16 +5699,17 @@ function App() {
 
         <section className="panel conversationPanel">
           <PanelTitle
-            title={selectedCustomerTitle}
-            icon={<MessageSquareText size={18} />}
-            editable
-            titleMeta={!isMergedWorkflowView && selectedWorkflowTitle ? selectedWorkflowTitle : ''}
+            title={mainView === 'calendar' ? '日历' : selectedCustomerTitle}
+            icon={mainView === 'calendar' ? <CalendarDays size={18} /> : <MessageSquareText size={18} />}
+            editable={mainView !== 'calendar'}
+            meta={mainView === 'calendar' ? `${calendarMonthActiveDays} 天 · ${calendarMonthActivityCount} 条记录` : undefined}
+            titleMeta={mainView !== 'calendar' && !isMergedWorkflowView && selectedWorkflowTitle ? selectedWorkflowTitle : ''}
             onTitleChange={(newTitle) => {
               if (selectedCustomer) {
                 updateCustomer(selectedCustomer.id, { displayTitle: newTitle });
               }
             }}
-            action={(
+            action={mainView === 'workspace' && (
               <div className="panelHeaderActions">
                 <button
                   type="button"
@@ -5518,7 +5723,32 @@ function App() {
               </div>
             )}
           />
-          {selectedCustomer ? (
+          {mainView === 'calendar' ? (
+            <CalendarView
+              month={calendarMonth}
+              days={calendarDays}
+              selectedDate={selectedCalendarDate}
+              selectedActivities={selectedDayActivities}
+              today={formatLocalDate(new Date())}
+              onPrevMonth={() => {
+                const nextMonth = shiftMonth(calendarMonth, -1);
+                setCalendarMonth(nextMonth);
+                setSelectedCalendarDate(`${nextMonth}-01`);
+              }}
+              onNextMonth={() => {
+                const nextMonth = shiftMonth(calendarMonth, 1);
+                setCalendarMonth(nextMonth);
+                setSelectedCalendarDate(`${nextMonth}-01`);
+              }}
+              onToday={() => {
+                const today = formatLocalDate(new Date());
+                setCalendarMonth(today.slice(0, 7));
+                setSelectedCalendarDate(today);
+              }}
+              onSelectDate={setSelectedCalendarDate}
+              onOpenActivity={openCalendarActivity}
+            />
+          ) : selectedCustomer ? (
             <div className="conversationBody">
               <div className="editorShell">
                 <div className="editorToolbar">
@@ -6186,6 +6416,136 @@ function App() {
         </div>
       )}
     </main>
+  );
+}
+
+function CalendarView({
+  month,
+  days,
+  selectedDate,
+  selectedActivities,
+  today,
+  onPrevMonth,
+  onNextMonth,
+  onToday,
+  onSelectDate,
+  onOpenActivity,
+}) {
+  const weekDays = ['日', '一', '二', '三', '四', '五', '六'];
+  const selectedDateLabel = selectedDate ? `${selectedDate.slice(5, 7)}月${selectedDate.slice(8, 10)}日` : '';
+
+  return (
+    <div className="calendarView">
+      <div className="calendarToolbar">
+        <button type="button" className="calendarNavButton" onClick={onPrevMonth} title="上个月">
+          <ChevronLeft size={17} />
+        </button>
+        <div className="calendarMonthTitle">
+          <strong>{getMonthLabel(month)}</strong>
+          <span>{selectedDateLabel}</span>
+        </div>
+        <button type="button" className="calendarNavButton" onClick={onNextMonth} title="下个月">
+          <ChevronRight size={17} />
+        </button>
+        <button type="button" className="calendarTodayButton" onClick={onToday}>
+          今天
+        </button>
+      </div>
+
+      <div className="calendarLayout">
+        <div className="calendarGridPanel">
+          <div className="calendarWeekHeader">
+            {weekDays.map((day) => (
+              <span key={day}>{day}</span>
+            ))}
+          </div>
+          <div className="calendarGrid">
+            {days.map((day, index) => {
+              if (!day) return <div key={`blank-${index}`} className="calendarDay emptyDay" />;
+              const isSelected = day.date === selectedDate;
+              const isToday = day.date === today;
+              const noteCount = day.activities.filter((activity) => activity.types.includes('笔记')).length;
+              const editCount = day.activities.filter((activity) => activity.types.includes('修改')).length;
+              const visibleActivities = day.activities.slice(0, 3);
+              const hiddenActivityCount = Math.max(day.activities.length - visibleActivities.length, 0);
+              const activityTitle = day.activities
+                .map((activity) => activity.workflowTitle)
+                .join('、');
+
+              return (
+                <button
+                  key={day.date}
+                  type="button"
+                  className={`calendarDay ${isSelected ? 'selectedDay' : ''} ${isToday ? 'todayDay' : ''} ${day.activities.length > 0 ? 'hasActivity' : ''}`}
+                  onClick={() => onSelectDate(day.date)}
+                  title={`${day.date} · ${day.activities.length} 条记录${activityTitle ? ` · ${activityTitle}` : ''}`}
+                >
+                  <span className="calendarDayHeader">
+                    <span className="calendarDayNumber">{day.day}</span>
+                    {day.activities.length > 0 && (
+                      <span className="calendarDayCount">{day.activities.length}</span>
+                    )}
+                  </span>
+                  {visibleActivities.length > 0 && (
+                    <span className="calendarDayWorkflows">
+                      {visibleActivities.map((activity) => (
+                        <span key={activity.workflowId} title={activity.workflowTitle}>
+                          {activity.workflowTitle}
+                        </span>
+                      ))}
+                      {hiddenActivityCount > 0 && (
+                        <span className="calendarDayMore">+{hiddenActivityCount}</span>
+                      )}
+                    </span>
+                  )}
+                  <span className="calendarDayMarks">
+                    {noteCount > 0 && <i className="noteMark" title={`${noteCount} 条笔记`} />}
+                    {editCount > 0 && <i className="editMark" title={`${editCount} 条修改`} />}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="calendarAgenda">
+          <div className="calendarAgendaHeader">
+            <div>
+              <h3>{selectedDateLabel || '选择日期'}</h3>
+              <span>{selectedActivities.length} 条记录</span>
+            </div>
+          </div>
+          <div className="calendarAgendaList">
+            {selectedActivities.length === 0 ? (
+              <div className="calendarEmptyDay">当天没有笔记或修改记录</div>
+            ) : selectedActivities.map((activity) => (
+              <button
+                key={`${activity.customerId}-${activity.workflowId}-${activity.types.join('-')}`}
+                type="button"
+                className="calendarAgendaItem"
+                onClick={() => onOpenActivity(activity)}
+              >
+                <div className="calendarAgendaTopline">
+                  <strong>{activity.customerTitle}</strong>
+                  <span className={`statusTag status${activity.status}`}>{activity.status}</span>
+                </div>
+                <div className="calendarAgendaMeta">
+                  <span>{activity.workflowTitle}</span>
+                  <span>{activity.date}</span>
+                </div>
+                <div className="calendarAgendaTags">
+                  {activity.types.map((type) => (
+                    <span key={type} className={type === '修改' ? 'editTypeTag' : 'noteTypeTag'}>
+                      {type}
+                    </span>
+                  ))}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
