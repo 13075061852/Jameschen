@@ -121,8 +121,23 @@ function parseActivityDate(value = '') {
   if (!value) return '';
   const parsed = new Date(value);
   if (!Number.isNaN(parsed.getTime())) return formatLocalDate(parsed);
-  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
-  return match ? `${match[1]}-${match[2]}-${match[3]}` : '';
+  const match = String(value).match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  return match
+    ? `${match[1]}-${String(Number(match[2])).padStart(2, '0')}-${String(Number(match[3])).padStart(2, '0')}`
+    : '';
+}
+
+function formatActivityTime(value = '') {
+  if (!value) return '';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
 }
 
 function getMonthLabel(monthKey = '') {
@@ -173,6 +188,7 @@ function buildCalendarActivities(customers) {
     if (existing) {
       existing.types = Array.from(new Set([...existing.types, ...activity.types]));
       existing.lastEditedAt = activity.lastEditedAt || existing.lastEditedAt;
+      existing.editTimeline = activity.editTimeline ?? existing.editTimeline ?? [];
       return;
     }
     current.push(activity);
@@ -184,7 +200,7 @@ function buildCalendarActivities(customers) {
     (customer.timeline ?? []).forEach((workflow) => {
       const createdDate = parseActivityDate(workflow.createdAt) || parseActivityDate(workflow.date);
       const workflowDate = parseActivityDate(workflow.date) || createdDate;
-      const editedDate = parseActivityDate(workflow.lastEditedAt);
+      const editTimeline = getWorkflowEditTimeline(workflow);
       const title = workflow.title || workflow.content || '沟通记录';
       const baseActivity = {
         customerId: customer.id,
@@ -195,6 +211,7 @@ function buildCalendarActivities(customers) {
         date: workflowDate,
         createdAt: workflow.createdAt || '',
         lastEditedAt: workflow.lastEditedAt || '',
+        editTimeline,
       };
 
       addActivity(workflowDate, {
@@ -202,12 +219,13 @@ function buildCalendarActivities(customers) {
         types: ['笔记'],
       });
 
-      if (editedDate && editedDate !== workflowDate) {
+      editTimeline.forEach((editEntry) => {
+        const editedDate = parseActivityDate(editEntry.at);
         addActivity(editedDate, {
           ...baseActivity,
           types: ['修改'],
         });
-      }
+      });
     });
   });
 
@@ -898,6 +916,36 @@ function getLegacyWorkflowEditHistory(item = {}) {
     : [];
 }
 
+function getWorkflowEditTimeline(item = {}) {
+  const content = item.documentContent ?? item.content ?? '';
+  if (!content) return [];
+
+  const readTimestampText = (value = '') => value.replace(/\s+/g, ' ').trim();
+  let timestamps = [];
+
+  if (typeof document === 'undefined') {
+    timestamps = Array.from(String(content).matchAll(/<div[^>]*class=(["'])[^"']*editorTimestampBlock[^"']*\1[^>]*>([\s\S]*?)<\/div>/gi))
+      .map((match) => readTimestampText(match[2].replace(/<[^>]*>/g, '')));
+  } else {
+    const container = document.createElement('div');
+    container.innerHTML = toEditorHtml(content);
+    timestamps = Array.from(container.querySelectorAll('.editorTimestampBlock'))
+      .map((element) => readTimestampText(element.textContent ?? ''));
+  }
+
+  const seen = new Set();
+  return timestamps
+    .slice(1)
+    .map((at) => ({ at }))
+    .filter((entry) => parseActivityDate(entry.at))
+    .filter((entry) => {
+      const key = entry.at;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
 function getWorkflowCreatedAt(item = {}) {
   const legacyHistory = getLegacyWorkflowEditHistory(item);
   return item.createdAt || legacyHistory[0]?.at || item.date || '';
@@ -1238,17 +1286,17 @@ function App() {
   }, [gradeFilter, query]);
 
   useEffect(() => {
-    if (!editorRef.current || isMergedWorkflowView) return;
+    if (mainView !== 'workspace' || !editorRef.current || isMergedWorkflowView) return;
     editorRef.current.innerHTML = toEditorHtml(stripStoredAssetSrcBeforeDomInsert(editorContent));
     prepareEditorImages();
     prepareEditorVideos();
     prepareEditorAttachments();
     editorSelectionRef.current = null;
     resetEditorHistory();
-  }, [editorKey, isMergedWorkflowView, singleWorkflowMetaKey, editorHydrationVersion]);
+  }, [mainView, editorKey, isMergedWorkflowView, singleWorkflowMetaKey, editorHydrationVersion]);
 
   useEffect(() => {
-    if (!editorRef.current || !isMergedWorkflowView) return;
+    if (mainView !== 'workspace' || !editorRef.current || !isMergedWorkflowView) return;
     editorRef.current.innerHTML = toEditorHtml(stripStoredAssetSrcBeforeDomInsert(editorContent));
     prepareMergedWorkflowTimestampVisibility();
     prepareEditorImages();
@@ -1256,7 +1304,7 @@ function App() {
     prepareEditorAttachments();
     editorSelectionRef.current = null;
     resetEditorHistory();
-  }, [editorKey, isMergedWorkflowView, mergedWorkflowMetaKey, editorHydrationVersion]);
+  }, [mainView, editorKey, isMergedWorkflowView, mergedWorkflowMetaKey, editorHydrationVersion]);
 
   useEffect(() => () => {
     cancelAnimationFrame(imageDragRafRef.current);
@@ -1275,7 +1323,7 @@ function App() {
 
   useEffect(() => {
     const editor = editorRef.current;
-    if (!editor) return undefined;
+    if (mainView !== 'workspace' || !editor) return undefined;
 
     function handleNativeEditorInput() {
       saveCurrentEditorContent();
@@ -1283,7 +1331,7 @@ function App() {
 
     editor.addEventListener('input', handleNativeEditorInput);
     return () => editor.removeEventListener('input', handleNativeEditorInput);
-  }, [editorKey, isMergedWorkflowView, editorHydrationVersion]);
+  }, [mainView, editorKey, isMergedWorkflowView, editorHydrationVersion]);
 
   // Capture editor selection on every mouseup, even when the mouse is released
   // outside the editor container (e.g. dragging from right to left across the
@@ -1891,6 +1939,7 @@ function App() {
     setSelectedId(activity.customerId);
     setSelectedWorkflowId(targetWorkflowId);
     setSelectedWorkflowIds([]);
+    setEditorHydrationVersion((version) => version + 1);
     rememberSelectedWorkflowForCustomer(activity.customerId, targetWorkflowId);
     saveViewState({
       selectedId: activity.customerId,
@@ -2088,7 +2137,7 @@ function App() {
     const today = new Date().toISOString().slice(0, 10);
     const now = new Date();
     const stamp = now.toLocaleString('zh-CN', { hour12: false });
-    const timestampHtml = `<div class="editorTimestampBlock" data-undeletable="true" contenteditable="false">${stamp}</div><div>&#x200b;</div>`;
+    const timestampHtml = `<div class="editorTimestampBlock" data-undeletable="true" contenteditable="false">${stamp}</div><div class="editorTimestampCursorLine">&#x200b;</div>`;
     const appendedSelfTargets = [];
     const createdSelfTargets = [];
 
@@ -2715,7 +2764,7 @@ function App() {
     const shouldMoveDraftIntoNewWorkflow = !selectedWorkflow && !isMergedWorkflowView;
     // Prepend an undeletable timestamp to every new workflow so content
     // typed after it is always properly persisted.
-    const timestampHtml = `<div class="editorTimestampBlock" data-undeletable="true" contenteditable="false">${stamp}</div><div>&#x200b;</div>`;
+    const timestampHtml = `<div class="editorTimestampBlock" data-undeletable="true" contenteditable="false">${stamp}</div><div class="editorTimestampCursorLine">&#x200b;</div>`;
     const documentContent = shouldMoveDraftIntoNewWorkflow
       ? timestampHtml + contentHtml
       : timestampHtml;
@@ -4172,29 +4221,49 @@ function App() {
     if (!range) return;
     const selection = window.getSelection();
     const timestamp = new Date().toLocaleString('zh-CN', { hour12: false });
+    const editorBody = range.startContainer.nodeType === Node.ELEMENT_NODE
+      ? range.startContainer.closest?.('.mergedWorkflowBody') || range.startContainer
+      : range.startContainer.parentElement?.closest?.('.mergedWorkflowBody');
+    const startElement = range.startContainer.nodeType === Node.ELEMENT_NODE
+      ? range.startContainer
+      : range.startContainer.parentElement;
+    const currentBlock = startElement?.closest?.('div,p,section,li,blockquote,h1,h2,h3,h4,h5,h6');
+    const insertionTarget = currentBlock && editorBody?.contains(currentBlock) && currentBlock !== editorBody
+      ? currentBlock
+      : null;
 
     const timestampBlock = document.createElement('div');
     timestampBlock.className = 'editorTimestampBlock';
     timestampBlock.contentEditable = 'false';
     timestampBlock.textContent = timestamp;
 
-    const nextLine = document.createElement('div');
-    const cursorText = document.createTextNode('\u200b');
-    nextLine.appendChild(cursorText);
-
     const fragment = document.createDocumentFragment();
     fragment.appendChild(timestampBlock);
-    fragment.appendChild(nextLine);
 
-    range.deleteContents();
-    range.insertNode(fragment);
+    if (insertionTarget?.parentNode) {
+      insertionTarget.parentNode.insertBefore(fragment, insertionTarget);
+      const nextRange = document.createRange();
+      nextRange.selectNodeContents(insertionTarget);
+      nextRange.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(nextRange);
+      editorSelectionRef.current = nextRange.cloneRange();
+    } else {
+      const nextLine = document.createElement('div');
+      nextLine.className = 'editorTimestampCursorLine';
+      const cursorText = document.createTextNode('\u200b');
+      nextLine.appendChild(cursorText);
+      timestampBlock.after(nextLine);
+      range.deleteContents();
+      range.insertNode(fragment);
 
-    const nextRange = document.createRange();
-    nextRange.setStart(cursorText, cursorText.length);
-    nextRange.collapse(true);
-    selection?.removeAllRanges();
-    selection?.addRange(nextRange);
-    editorSelectionRef.current = nextRange.cloneRange();
+      const nextRange = document.createRange();
+      nextRange.setStart(cursorText, cursorText.length);
+      nextRange.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(nextRange);
+      editorSelectionRef.current = nextRange.cloneRange();
+    }
     syncEditorContentAndFlushSave();
   }
 
@@ -6629,13 +6698,13 @@ function CalendarView({
                           <div className="calendarAgendaMeta">
                             <span>{activity.date}</span>
                           </div>
-                          <div className="calendarAgendaTags">
-                            {activity.types.map((type) => (
-                              <span key={type} className={type === '修改' ? 'editTypeTag' : 'noteTypeTag'}>
-                                {type}
-                              </span>
-                            ))}
-                          </div>
+                          {activity.editTimeline?.length > 0 && (
+                            <div className="calendarEditTimeline">
+                              {activity.editTimeline.map((entry) => (
+                                <span key={entry.at}>修改记录 {formatActivityTime(entry.at)}</span>
+                              ))}
+                            </div>
+                          )}
                         </button>
                       ))}
                     </div>

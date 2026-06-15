@@ -1702,6 +1702,16 @@ button {
   user-select: none;
 }
 
+.mergedWorkflowBody > .editorTimestampBlock {
+  margin-bottom: 2px;
+}
+
+.mergedWorkflowBody > .editorTimestampCursorLine {
+  min-height: 0;
+  height: 1.65em;
+  line-height: 1.65;
+}
+
 .mergedViewContent .mergedFirstTimestampHidden {
   display: none !important;
 }
@@ -4260,8 +4270,7 @@ button {
 }
 
 .calendarAgendaTopline,
-.calendarAgendaMeta,
-.calendarAgendaTags {
+.calendarAgendaMeta {
   min-width: 0;
   display: flex;
   align-items: center;
@@ -4294,7 +4303,32 @@ button {
   white-space: nowrap;
 }
 
-.calendarAgendaTags span,
+.calendarEditTimeline {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 9px;
+  border-left: 2px solid rgba(11, 138, 141, 0.18);
+  color: #777777;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.calendarEditTimeline span {
+  position: relative;
+}
+
+.calendarEditTimeline span::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  left: -13px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #0b8a8d;
+}
+
 .statusTag {
   height: 21px;
   display: inline-flex;
@@ -4304,16 +4338,6 @@ button {
   font-size: 11px;
   font-weight: 850;
   flex: 0 0 auto;
-}
-
-.noteTypeTag {
-  color: #0b7476;
-  background: rgba(11, 138, 141, 0.1);
-}
-
-.editTypeTag {
-  color: #a05f10;
-  background: rgba(240, 164, 66, 0.16);
 }
 
 .statusTag {
