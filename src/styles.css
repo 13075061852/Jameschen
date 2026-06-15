@@ -3453,8 +3453,12 @@ button {
   }
 
   .calendarLayout {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr !important;
     overflow-y: auto;
+  }
+
+  .calendarAgendaResizer {
+    display: none;
   }
 
   .calendarGrid {
@@ -3934,9 +3938,39 @@ button {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(360px, 1fr) minmax(260px, 34%);
-  gap: 12px;
+  grid-template-columns: minmax(640px, 1fr) 4px minmax(260px, var(--calendar-agenda-width, 340px));
+  gap: 4px;
   padding-top: 12px;
+}
+
+.calendarLayout.isCalendarResizing {
+  cursor: col-resize;
+}
+
+.calendarAgendaResizer {
+  position: relative;
+  min-height: 0;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.calendarAgendaResizer::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 50%;
+  width: 1px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.1);
+  transform: translateX(-50%);
+  transition: background 140ms ease, box-shadow 140ms ease;
+}
+
+.calendarAgendaResizer:hover::before,
+.calendarLayout.isCalendarResizing .calendarAgendaResizer::before {
+  background: rgba(11, 138, 141, 0.52);
+  box-shadow: 0 0 0 3px rgba(239, 252, 250, 0.88);
 }
 
 .calendarGridPanel,
@@ -3950,6 +3984,11 @@ button {
   background: rgba(255, 255, 255, 0.74);
   box-shadow: var(--shadow-soft);
   overflow: hidden;
+}
+
+.calendarGridPanel {
+  min-width: 640px;
+  overflow-x: auto;
 }
 
 .calendarWeekHeader {
@@ -4082,28 +4121,6 @@ button {
   font-weight: 850;
 }
 
-.calendarDayMarks {
-  margin-top: auto;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.calendarDayMarks i {
-  width: 8px;
-  height: 8px;
-  display: block;
-  border-radius: 50%;
-}
-
-.calendarDayMarks .noteMark {
-  background: #0b8a8d;
-}
-
-.calendarDayMarks .editMark {
-  background: #b96a17;
-}
-
 .calendarAgendaHeader {
   min-height: 54px;
   padding: 11px 12px;
@@ -4137,6 +4154,75 @@ button {
   flex-direction: column;
   gap: 8px;
   overflow-y: auto;
+}
+
+.calendarCustomerGroup {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.calendarCustomerGroup.collapsed {
+  gap: 0;
+}
+
+.calendarCustomerGroupHeader {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 7px;
+  color: #111111;
+  background: rgba(246, 246, 246, 0.74);
+  text-align: left;
+}
+
+.calendarCustomerGroupHeader:hover {
+  background: rgba(239, 252, 250, 0.86);
+}
+
+.calendarCustomerGroupHeader svg {
+  color: #0b7476;
+  flex: 0 0 auto;
+}
+
+.calendarCustomerGroupHeader strong {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 860;
+}
+
+.calendarCustomerGroupHeader span {
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  border-radius: 999px;
+  color: #0b7476;
+  background: rgba(11, 138, 141, 0.1);
+  font-size: 12px;
+  font-weight: 850;
+  flex: 0 0 auto;
+}
+
+.calendarCustomerNotes {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
 }
 
 .calendarAgendaItem {

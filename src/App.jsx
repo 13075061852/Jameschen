@@ -6433,6 +6433,71 @@ function CalendarView({
 }) {
   const weekDays = ['日', '一', '二', '三', '四', '五', '六'];
   const selectedDateLabel = selectedDate ? `${selectedDate.slice(5, 7)}月${selectedDate.slice(8, 10)}日` : '';
+  const [collapsedCustomerGroups, setCollapsedCustomerGroups] = useState(new Set());
+  const [agendaWidth, setAgendaWidth] = useState(300);
+  const [activeCalendarResize, setActiveCalendarResize] = useState(false);
+  const calendarLayoutRef = useRef(null);
+  const groupedActivities = useMemo(() => {
+    const groupMap = new Map();
+    selectedActivities.forEach((activity) => {
+      const group = groupMap.get(activity.customerId) ?? {
+        customerId: activity.customerId,
+        customerTitle: activity.customerTitle,
+        activities: [],
+      };
+      group.activities.push(activity);
+      groupMap.set(activity.customerId, group);
+    });
+    return Array.from(groupMap.values());
+  }, [selectedActivities]);
+
+  function toggleCustomerGroup(customerId) {
+    const groupKey = `${selectedDate}:${customerId}`;
+    setCollapsedCustomerGroups((current) => {
+      const next = new Set(current);
+      if (next.has(groupKey)) {
+        next.delete(groupKey);
+      } else {
+        next.add(groupKey);
+      }
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    if (!activeCalendarResize) return undefined;
+
+    const handlePointerMove = (event) => {
+      const layoutRect = calendarLayoutRef.current?.getBoundingClientRect();
+      if (!layoutRect) return;
+      const minAgendaWidth = 260;
+      const minCalendarWidth = 640;
+      const maxAgendaWidth = Math.max(minAgendaWidth, layoutRect.width - minCalendarWidth);
+      const nextWidth = Math.min(
+        Math.max(layoutRect.right - event.clientX, minAgendaWidth),
+        maxAgendaWidth,
+      );
+      setAgendaWidth(Math.round(nextWidth));
+    };
+
+    const stopResizing = () => {
+      setActiveCalendarResize(false);
+      document.body.style.removeProperty('cursor');
+      document.body.style.removeProperty('user-select');
+    };
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', stopResizing);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', stopResizing);
+      document.body.style.removeProperty('cursor');
+      document.body.style.removeProperty('user-select');
+    };
+  }, [activeCalendarResize]);
 
   return (
     <div className="calendarView">
@@ -6452,7 +6517,11 @@ function CalendarView({
         </button>
       </div>
 
-      <div className="calendarLayout">
+      <div
+        ref={calendarLayoutRef}
+        className={`calendarLayout ${activeCalendarResize ? 'isCalendarResizing' : ''}`}
+        style={{ '--calendar-agenda-width': `${agendaWidth}px` }}
+      >
         <div className="calendarGridPanel">
           <div className="calendarWeekHeader">
             {weekDays.map((day) => (
@@ -6464,8 +6533,6 @@ function CalendarView({
               if (!day) return <div key={`blank-${index}`} className="calendarDay emptyDay" />;
               const isSelected = day.date === selectedDate;
               const isToday = day.date === today;
-              const noteCount = day.activities.filter((activity) => activity.types.includes('笔记')).length;
-              const editCount = day.activities.filter((activity) => activity.types.includes('修改')).length;
               const visibleActivities = day.activities.slice(0, 3);
               const hiddenActivityCount = Math.max(day.activities.length - visibleActivities.length, 0);
               const activityTitle = day.activities
@@ -6498,15 +6565,22 @@ function CalendarView({
                       )}
                     </span>
                   )}
-                  <span className="calendarDayMarks">
-                    {noteCount > 0 && <i className="noteMark" title={`${noteCount} 条笔记`} />}
-                    {editCount > 0 && <i className="editMark" title={`${editCount} 条修改`} />}
-                  </span>
                 </button>
               );
             })}
           </div>
         </div>
+
+        <div
+          className="calendarAgendaResizer"
+          onPointerDown={(event) => {
+            event.preventDefault();
+            setActiveCalendarResize(true);
+          }}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整日历记录栏宽度"
+        />
 
         <div className="calendarAgenda">
           <div className="calendarAgendaHeader">
@@ -6518,30 +6592,51 @@ function CalendarView({
           <div className="calendarAgendaList">
             {selectedActivities.length === 0 ? (
               <div className="calendarEmptyDay">当天没有笔记或修改记录</div>
-            ) : selectedActivities.map((activity) => (
-              <button
-                key={`${activity.customerId}-${activity.workflowId}-${activity.types.join('-')}`}
-                type="button"
-                className="calendarAgendaItem"
-                onClick={() => onOpenActivity(activity)}
-              >
-                <div className="calendarAgendaTopline">
-                  <strong>{activity.customerTitle}</strong>
-                  <span className={`statusTag status${activity.status}`}>{activity.status}</span>
+            ) : groupedActivities.map((group) => {
+              const groupKey = `${selectedDate}:${group.customerId}`;
+              const collapsed = collapsedCustomerGroups.has(groupKey);
+
+              return (
+                <div key={group.customerId} className={`calendarCustomerGroup ${collapsed ? 'collapsed' : ''}`}>
+                  <button
+                    type="button"
+                    className="calendarCustomerGroupHeader"
+                    onClick={() => toggleCustomerGroup(group.customerId)}
+                  >
+                    {collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+                    <strong>{group.customerTitle}</strong>
+                    <span>{group.activities.length} 条笔记</span>
+                  </button>
+                  {!collapsed && (
+                    <div className="calendarCustomerNotes">
+                      {group.activities.map((activity) => (
+                        <button
+                          key={`${activity.customerId}-${activity.workflowId}-${activity.types.join('-')}`}
+                          type="button"
+                          className="calendarAgendaItem"
+                          onClick={() => onOpenActivity(activity)}
+                        >
+                          <div className="calendarAgendaTopline">
+                            <strong>{activity.workflowTitle}</strong>
+                            <span className={`statusTag status${activity.status}`}>{activity.status}</span>
+                          </div>
+                          <div className="calendarAgendaMeta">
+                            <span>{activity.date}</span>
+                          </div>
+                          <div className="calendarAgendaTags">
+                            {activity.types.map((type) => (
+                              <span key={type} className={type === '修改' ? 'editTypeTag' : 'noteTypeTag'}>
+                                {type}
+                              </span>
+                            ))}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <div className="calendarAgendaMeta">
-                  <span>{activity.workflowTitle}</span>
-                  <span>{activity.date}</span>
-                </div>
-                <div className="calendarAgendaTags">
-                  {activity.types.map((type) => (
-                    <span key={type} className={type === '修改' ? 'editTypeTag' : 'noteTypeTag'}>
-                      {type}
-                    </span>
-                  ))}
-                </div>
-              </button>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>
