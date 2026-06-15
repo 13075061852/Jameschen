@@ -1769,21 +1769,21 @@ button {
   width: 320px;
   max-width: 100%;
   display: inline-block;
+  margin: 8px 8px 8px 0;
   vertical-align: top;
-  line-height: 1.65;
+  line-height: 0;
   user-select: none;
   -webkit-user-drag: none;
   cursor: grab;
-  contain: layout style;
   transition: box-shadow 140ms ease, outline-color 140ms ease, opacity 140ms ease;
 }
 
 .messyContent .editorCaretAnchor {
-  display: inline-block;
-  width: 3px;
-  min-height: 1.65em;
-  line-height: 1.65;
-  vertical-align: top;
+  display: none;
+}
+
+.messyContent .editorMediaCursorLine {
+  display: none;
 }
 
 .messyContent .editorImageFrame img {
@@ -1942,14 +1942,16 @@ button {
 
 .messyContent .editorAttachmentFrame {
   position: relative;
-  max-width: min(360px, 100%);
+  width: min(300px, 100%);
+  max-width: 100%;
   min-height: 46px;
-  margin: 4px 4px 4px 0;
+  box-sizing: border-box;
+  margin: 8px 8px 8px 0;
   padding: 8px 10px;
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  vertical-align: middle;
+  vertical-align: top;
   border: 1px solid rgba(0, 0, 0, 0.16);
   border-radius: 8px;
   color: #222222;
@@ -2025,6 +2027,7 @@ button {
 
 .editorAttachmentText {
   min-width: 0;
+  flex: 1;
   display: grid;
   gap: 2px;
   line-height: 1.2;

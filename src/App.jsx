@@ -966,6 +966,35 @@ function getWorkflowCreatedAt(item = {}) {
   return item.createdAt || legacyHistory[0]?.at || item.date || '';
 }
 
+function getWorkflowContentRichness(entry = {}) {
+  const content = String(entry.documentContent ?? entry.content ?? '');
+  const hasCompressedAttachment = content.includes('[附件-大数据已压缩]');
+  const mediaCount = (content.match(/editor(Image|Attachment|Video)Frame|<img\b|<video\b/gi) ?? []).length;
+  return {
+    length: content.length,
+    mediaCount,
+    hasCompressedAttachment,
+  };
+}
+
+function shouldPreferStoredWorkflowEntry(currentEntry = {}, storedEntry = {}) {
+  const currentTime = currentEntry.lastEditedAt
+    ? new Date(currentEntry.lastEditedAt).getTime() : 0;
+  const storedTime = storedEntry.lastEditedAt
+    ? new Date(storedEntry.lastEditedAt).getTime() : 0;
+
+  if (storedTime > currentTime) return true;
+  if (storedTime < currentTime) return false;
+
+  const currentRichness = getWorkflowContentRichness(currentEntry);
+  const storedRichness = getWorkflowContentRichness(storedEntry);
+  if (currentRichness.hasCompressedAttachment && !storedRichness.hasCompressedAttachment) return true;
+  if (!currentRichness.hasCompressedAttachment && storedRichness.hasCompressedAttachment) return false;
+  if (storedRichness.mediaCount > currentRichness.mediaCount) return true;
+  if (storedRichness.mediaCount < currentRichness.mediaCount) return false;
+  return storedRichness.length > currentRichness.length;
+}
+
 function markWorkflowContentEdited(entry, nextContent, now = new Date()) {
   const currentContent = stripTransientObjectUrlsFromEditorHtml(normalizeWorkflowDocumentContent(entry.documentContent ?? entry.content ?? ''));
   const normalizedNextContent = stripTransientObjectUrlsFromEditorHtml(normalizeWorkflowDocumentContent(nextContent));
@@ -1014,12 +1043,7 @@ function mergeCustomersWithLatestData(currentCustomers, storedCustomers) {
       const storedEntry = storedTimelineById.get(currentEntry.id);
       if (!storedEntry) return currentEntry;
 
-      const currentTime = currentEntry.lastEditedAt
-        ? new Date(currentEntry.lastEditedAt).getTime() : 0;
-      const storedTime = storedEntry.lastEditedAt
-        ? new Date(storedEntry.lastEditedAt).getTime() : 0;
-
-      return storedTime > currentTime ? storedEntry : currentEntry;
+      return shouldPreferStoredWorkflowEntry(currentEntry, storedEntry) ? storedEntry : currentEntry;
     });
 
     // Append entries that exist only in stored
@@ -1303,9 +1327,11 @@ function App() {
   useEffect(() => {
     if (mainView !== 'workspace' || !editorRef.current || isMergedWorkflowView) return;
     editorRef.current.innerHTML = toEditorHtml(stripStoredAssetSrcBeforeDomInsert(editorContent));
+    normalizeEditorTimestampProtection();
     prepareEditorImages();
     prepareEditorVideos();
     prepareEditorAttachments();
+    normalizeEditorMediaFramePlacement();
     editorSelectionRef.current = null;
     resetEditorHistory();
   }, [mainView, editorKey, isMergedWorkflowView, singleWorkflowMetaKey, editorHydrationVersion]);
@@ -1313,10 +1339,12 @@ function App() {
   useEffect(() => {
     if (mainView !== 'workspace' || !editorRef.current || !isMergedWorkflowView) return;
     editorRef.current.innerHTML = toEditorHtml(stripStoredAssetSrcBeforeDomInsert(editorContent));
+    normalizeEditorTimestampProtection();
     prepareMergedWorkflowTimestampVisibility();
     prepareEditorImages();
     prepareEditorVideos();
     prepareEditorAttachments();
+    normalizeEditorMediaFramePlacement();
     editorSelectionRef.current = null;
     resetEditorHistory();
   }, [mainView, editorKey, isMergedWorkflowView, mergedWorkflowMetaKey, editorHydrationVersion]);
@@ -1945,9 +1973,12 @@ function App() {
     rememberMergedWorkflowSelectionForCustomer();
     const targetCustomer = nextCustomers.find((customer) => customer.id === activity.customerId);
     if (!targetCustomer) return;
-    const targetWorkflowId = targetCustomer.timeline?.some((workflow) => workflow.id === activity.workflowId)
-      ? activity.workflowId
-      : targetCustomer.timeline?.[0]?.id ?? '';
+    const targetWorkflow = targetCustomer.timeline?.find((workflow) => workflow.id === activity.workflowId);
+    if (!targetWorkflow) {
+      window.alert('这条日历记录对应的工作流已经不存在或已变更，请刷新日历后再打开。');
+      return;
+    }
+    const targetWorkflowId = targetWorkflow.id;
 
     setMainView('workspace');
     setWorkflowViewMode('single');
@@ -1961,6 +1992,7 @@ function App() {
       selectedWorkflowId: targetWorkflowId,
       selectedWorkflowIds: [],
       workflowViewMode: 'single',
+      mainView: 'workspace',
     });
     setEditingWorkflowTitleId('');
   }
@@ -2853,6 +2885,8 @@ function App() {
     if (!editorRef.current) return '';
     const clonedEditor = editorRef.current.cloneNode(true);
     normalizeEditorMediaSourcesInElement(clonedEditor);
+    normalizeEditorTimestampProtection(clonedEditor);
+    normalizeEditorMediaFramePlacement(clonedEditor);
     clearTransientEditorSelectionClasses(clonedEditor);
     return clonedEditor.innerHTML;
   }
@@ -2909,6 +2943,7 @@ function App() {
     prepareEditorImages();
     prepareEditorVideos();
     prepareEditorAttachments();
+    normalizeEditorMediaFramePlacement();
     clearActiveEditorObjects();
     clearEditorRangeSelectionState();
     placeEditorCursorAtEnd();
@@ -3040,6 +3075,53 @@ function App() {
     container.querySelectorAll('.editorCaretAnchor').forEach((element) => element.remove());
     container.querySelectorAll('.editorTimestampBlock').forEach((element) => {
       element.style.removeProperty('display');
+    });
+  }
+
+  function isEmptyEditorCursorLine(element) {
+    if (!(element instanceof HTMLElement)) return false;
+    if (element.querySelector(EDITOR_DRAGGABLE_OBJECT_SELECTOR)) return false;
+    return !(element.textContent || '').replace(/\u200b/g, '').trim();
+  }
+
+  function normalizeEditorMediaFramePlacement(container = editorRef.current) {
+    if (!container) return;
+
+    container.querySelectorAll('.editorCaretAnchor').forEach((element) => element.remove());
+
+    container.querySelectorAll('.editorMediaCursorLine').forEach((line) => {
+      const parent = line.parentNode;
+      if (!parent) return;
+      Array.from(line.children).forEach((child) => {
+        if (isEditorObjectElement(child)) {
+          parent.insertBefore(child, line);
+        }
+      });
+      if (isEmptyEditorCursorLine(line)) {
+        line.remove();
+      } else {
+        line.classList.remove('editorMediaCursorLine');
+      }
+    });
+  }
+
+  function normalizeEditorTimestampProtection(container = editorRef.current) {
+    if (!container) return;
+    const bodies = container.matches?.('.mergedWorkflowBody')
+      ? [container]
+      : Array.from(container.querySelectorAll('.mergedWorkflowBody'));
+    const scopes = bodies.length > 0 ? bodies : [container];
+
+    scopes.forEach((scope) => {
+      const timestamps = Array.from(scope.querySelectorAll('.editorTimestampBlock'));
+      timestamps.forEach((timestamp, index) => {
+        timestamp.contentEditable = 'false';
+        if (index === 0) {
+          timestamp.dataset.undeletable = 'true';
+        } else {
+          timestamp.removeAttribute('data-undeletable');
+        }
+      });
     });
   }
 
@@ -3428,6 +3510,42 @@ function App() {
     return range;
   }
 
+  function getEditorMediaInsertionRange() {
+    const range = ensureEditorInsertionRange();
+    const editor = editorRef.current;
+    if (!range || !editor) return null;
+
+    const startElement = range.startContainer.nodeType === Node.ELEMENT_NODE
+      ? range.startContainer
+      : range.startContainer.parentElement;
+    const cursorLine = startElement?.closest?.('.editorMediaCursorLine, .editorTimestampCursorLine');
+    if (cursorLine && editor.contains(cursorLine)) {
+      const mediaRange = document.createRange();
+      if (isEmptyEditorCursorLine(cursorLine)) {
+        mediaRange.selectNode(cursorLine);
+      } else {
+        mediaRange.setStartAfter(cursorLine);
+        mediaRange.collapse(true);
+      }
+      return mediaRange;
+    }
+
+    const body = startElement?.closest?.('.mergedWorkflowBody');
+    const currentBlock = startElement?.closest?.('div,p,li,blockquote,h1,h2,h3,h4,h5,h6');
+    if (body && currentBlock && body.contains(currentBlock) && currentBlock !== body) {
+      const mediaRange = document.createRange();
+      if (isEmptyEditorCursorLine(currentBlock)) {
+        mediaRange.selectNode(currentBlock);
+      } else {
+        mediaRange.setStartAfter(currentBlock);
+        mediaRange.collapse(true);
+      }
+      return mediaRange;
+    }
+
+    return range;
+  }
+
   function applyEditorCommand(command, value = null) {
     if (command === 'undo') {
       undoEditorChange();
@@ -3502,6 +3620,124 @@ function App() {
   function isEditorObjectElement(element) {
     return element instanceof HTMLElement
       && element.matches('.editorImageFrame, .editorVideoFrame, .editorAttachmentFrame');
+  }
+
+  function isDeletableEditorTimestamp(element) {
+    return element instanceof HTMLElement
+      && element.classList.contains('editorTimestampBlock')
+      && element.dataset.undeletable !== 'true';
+  }
+
+  function getSiblingDeletableTimestampFromCaret(range, direction) {
+    const editor = editorRef.current;
+    if (!editor || !range?.collapsed) return null;
+
+    let current = range.startContainer;
+    let sibling = null;
+
+    if (current.nodeType === Node.TEXT_NODE) {
+      const text = current.textContent || '';
+      const sideText = direction === 'previous'
+        ? text.slice(0, range.startOffset)
+        : text.slice(range.startOffset);
+      if (sideText.replace(/\u200b/g, '').trim()) return null;
+      sibling = direction === 'previous' ? current.previousSibling : current.nextSibling;
+    } else {
+      const childNodes = Array.from(current.childNodes || []);
+      sibling = direction === 'previous'
+        ? childNodes[range.startOffset - 1] || null
+        : childNodes[range.startOffset] || null;
+    }
+
+    while (current && current !== editor) {
+      while (sibling) {
+        if (isDeletableEditorTimestamp(sibling) && editor.contains(sibling)) return sibling;
+        const hasMeaningfulText = sibling.nodeType === Node.TEXT_NODE
+          && Boolean((sibling.textContent || '').replace(/\u200b/g, '').trim());
+        if (hasMeaningfulText) return null;
+        sibling = direction === 'previous' ? sibling.previousSibling : sibling.nextSibling;
+      }
+      current = current.parentNode;
+      if (!current || current === editor) break;
+      sibling = direction === 'previous' ? current.previousSibling : current.nextSibling;
+    }
+
+    return null;
+  }
+
+  function getSelectedEditorTimestamp(range) {
+    const editor = editorRef.current;
+    if (!editor || !range || range.collapsed) return null;
+
+    const timestamps = Array.from(editor.querySelectorAll('.editorTimestampBlock'));
+    const selectedTimestamps = timestamps.filter((timestamp) => rangeIntersectsNode(range, timestamp));
+    return selectedTimestamps.length === 1 ? selectedTimestamps[0] : null;
+  }
+
+  function removeEditorNodeAndPlaceCaret(node) {
+    const selection = window.getSelection();
+    const parent = node.parentNode;
+    const nextOffset = parent ? Array.prototype.indexOf.call(parent.childNodes, node) : 0;
+    node.remove();
+    if (parent && editorRef.current?.contains(parent)) {
+      const nextRange = document.createRange();
+      nextRange.setStart(parent, Math.min(nextOffset, parent.childNodes.length));
+      nextRange.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(nextRange);
+      editorSelectionRef.current = nextRange.cloneRange();
+    }
+  }
+
+  function getOrCreateInlineMediaCaretNode(frame, side) {
+    if (!frame?.parentNode) return null;
+    const sibling = side === 'after' ? frame.nextSibling : frame.previousSibling;
+    if (sibling?.nodeType === Node.TEXT_NODE) return sibling;
+
+    const caretNode = document.createTextNode('\u200b');
+    if (side === 'after') {
+      frame.parentNode.insertBefore(caretNode, frame.nextSibling);
+    } else {
+      frame.parentNode.insertBefore(caretNode, frame);
+    }
+    return caretNode;
+  }
+
+  function placeEditorCaretAroundMediaFrame(frame, side) {
+    if (!frame || !editorRef.current?.contains(frame)) return false;
+    const selection = window.getSelection();
+    const range = document.createRange();
+    const cursorText = getOrCreateInlineMediaCaretNode(frame, side);
+
+    if (!cursorText || cursorText.nodeType !== Node.TEXT_NODE) return false;
+    range.setStart(cursorText, cursorText.textContent?.length ?? 0);
+    range.collapse(true);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    editorSelectionRef.current = range.cloneRange();
+    clearActiveEditorObjects();
+    editorRef.current.focus();
+    return true;
+  }
+
+  function placeEditorCaretFromMediaSideClick(event) {
+    const editor = editorRef.current;
+    if (!editor || event.target.closest?.(EDITOR_DRAGGABLE_OBJECT_SELECTOR)) return false;
+
+    const frames = Array.from(editor.querySelectorAll(EDITOR_DRAGGABLE_OBJECT_SELECTOR));
+    const clickedFrame = frames.find((frame) => {
+      const rect = frame.getBoundingClientRect();
+      const isSameRow = event.clientY >= rect.top && event.clientY <= rect.bottom;
+      const isSideGap = event.clientX < rect.left || event.clientX > rect.right;
+      return isSameRow && isSideGap;
+    });
+
+    if (!clickedFrame) return false;
+    const rect = clickedFrame.getBoundingClientRect();
+    return placeEditorCaretAroundMediaFrame(
+      clickedFrame,
+      event.clientX < rect.left ? 'before' : 'after',
+    );
   }
 
   function getEdgeEditorObject(node, direction) {
@@ -3603,35 +3839,14 @@ function App() {
     frame.contentEditable = 'false';
     frame.draggable = false;
     frame.setAttribute('draggable', 'false');
-    if (frame.style.display === 'block' && frame.style.marginLeft !== 'auto') {
+    if (frame.style.marginLeft === 'auto' || frame.style.marginRight === 'auto') {
+      frame.style.display = 'block';
+    } else {
       frame.style.display = 'inline-block';
+    }
+    if (!frame.style.marginLeft && !frame.style.marginRight) {
       frame.style.marginLeft = '0';
       frame.style.marginRight = '0';
-    }
-    ensureEditorObjectCaretAnchors(frame);
-  }
-
-  function isEditorCaretAnchor(node) {
-    return node instanceof HTMLElement && node.classList.contains('editorCaretAnchor');
-  }
-
-  function createEditorCaretAnchor() {
-    const anchor = document.createElement('span');
-    anchor.className = 'editorCaretAnchor';
-    anchor.dataset.editorCaretAnchor = 'true';
-    anchor.appendChild(document.createTextNode('\u200b'));
-    return anchor;
-  }
-
-  function ensureEditorObjectCaretAnchors(frame) {
-    const parent = frame.parentNode;
-    if (!parent) return;
-
-    if (!isEditorCaretAnchor(frame.previousSibling)) {
-      parent.insertBefore(createEditorCaretAnchor(), frame);
-    }
-    if (!isEditorCaretAnchor(frame.nextSibling)) {
-      parent.insertBefore(createEditorCaretAnchor(), frame.nextSibling);
     }
   }
 
@@ -3639,6 +3854,7 @@ function App() {
     frame.contentEditable = 'false';
     frame.draggable = false;
     frame.setAttribute('draggable', 'false');
+    frame.style.display = 'inline-flex';
     clearAttachmentBackground(frame);
     const kind = getAttachmentKind(frame.dataset.attachmentName ?? '', frame.dataset.attachmentType ?? '');
     frame.classList.remove('attachmentPdf', 'attachmentWord', 'attachmentExcel', 'attachmentVideo', 'attachmentFile');
@@ -3800,7 +4016,6 @@ function App() {
       image.parentNode?.insertBefore(frame, image);
       frame.appendChild(image);
       frame.appendChild(handle);
-      ensureEditorObjectCaretAnchors(frame);
     });
   }
 
@@ -4279,6 +4494,7 @@ function App() {
       selection?.addRange(nextRange);
       editorSelectionRef.current = nextRange.cloneRange();
     }
+    normalizeEditorTimestampProtection();
     syncEditorContentAndFlushSave();
   }
 
@@ -4320,7 +4536,7 @@ function App() {
 
   function insertEditorAttachment(file, url, { sync = true, selectInserted = true } = {}) {
     if (!editorRef.current) return;
-    const range = ensureEditorInsertionRange();
+    const range = getEditorMediaInsertionRange();
     if (!range) return;
     const selection = window.getSelection();
 
@@ -4331,21 +4547,22 @@ function App() {
       url,
     });
 
+    const fragment = document.createDocumentFragment();
+    fragment.appendChild(frame);
+    const cursorText = document.createTextNode('\u200b');
+    fragment.appendChild(cursorText);
+
     range.deleteContents();
-    range.insertNode(frame);
+    range.insertNode(fragment);
     clearAttachmentBackground(frame);
-    range.setStartAfter(frame);
+    range.setStart(cursorText, cursorText.length);
     range.collapse(true);
     selection?.removeAllRanges();
     selection?.addRange(range);
-    if (selectInserted) {
-      selectEditorObject(frame);
-    } else {
-      clearActiveEditorObjects();
-      editorSelectionRef.current = range.cloneRange();
-    }
+    clearActiveEditorObjects();
+    editorSelectionRef.current = range.cloneRange();
     if (sync) syncEditorContent();
-    if (!selectInserted) saveEditorSelection();
+    saveEditorSelection();
   }
 
   const MAX_IMAGE_DIMENSION = 1200;
@@ -4411,64 +4628,6 @@ function App() {
       src,
       { sync, selectInserted },
     );
-    return;
-
-    if (!editorRef.current) return;
-    const range = ensureEditorInsertionRange();
-    if (!range) return;
-    const selection = window.getSelection();
-
-    const frame = document.createElement('span');
-    frame.className = 'editorVideoFrame';
-    frame.contentEditable = 'false';
-    frame.draggable = false;
-    frame.setAttribute('draggable', 'false');
-    frame.dataset.videoName = file.name;
-    frame.dataset.videoType = file.type;
-    frame.dataset.videoSize = String(file.size);
-
-    const video = document.createElement('video');
-    video.controls = true;
-    video.preload = 'metadata';
-    video.dataset.editorSrc = src;
-    video.dataset.editorType = file.type || 'video/mp4';
-    video.setAttribute('aria-label', file.name || '上传视频');
-    video.draggable = false;
-    video.setAttribute('draggable', 'false');
-
-    if (isStoredAssetUrl(src)) {
-        resolveStoredAssetDataUrlWithRetry(src)
-        .then((dataUrl) => {
-          if (!editorRef.current?.contains(video)) return;
-          const objectUrl = dataUrlToBlobUrl(dataUrl, file.type || 'video/mp4');
-          editorObjectUrlsRef.current.add(objectUrl);
-          video.dataset.objectUrl = objectUrl;
-          video.src = objectUrl;
-        })
-        .catch((error) => {
-          console.warn('Failed to load inserted video asset', error);
-        });
-    } else {
-      video.src = src;
-    }
-
-    const caption = document.createElement('span');
-    caption.className = 'editorVideoCaption';
-    caption.textContent = `${file.name || '上传视频'}${file.size ? ` · ${formatFileSize(file.size)}` : ''}`;
-
-    frame.appendChild(video);
-    frame.appendChild(caption);
-
-    range.deleteContents();
-    range.insertNode(frame);
-    ensureEditorObjectCaretAnchors(frame);
-    range.setStartAfter(frame);
-    range.collapse(true);
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-    selectEditorObject(frame);
-    if (sync) syncEditorContent();
-    saveEditorSelection();
   }
 
   async function handleEditorVideoSelected(event) {
@@ -4633,7 +4792,7 @@ function App() {
 
   function insertEditorImage(src, { sync = true, selectInserted = true } = {}) {
     if (!editorRef.current) return;
-    const range = ensureEditorInsertionRange();
+    const range = getEditorMediaInsertionRange();
     if (!range) return;
     const selection = window.getSelection();
 
@@ -4689,18 +4848,19 @@ function App() {
     frame.appendChild(image);
     frame.appendChild(handle);
 
+    const fragment = document.createDocumentFragment();
+    fragment.appendChild(frame);
+    const cursorText = document.createTextNode('\u200b');
+    fragment.appendChild(cursorText);
+
     range.deleteContents();
-    range.insertNode(frame);
-    range.setStartAfter(frame);
+    range.insertNode(fragment);
+    range.setStart(cursorText, cursorText.length);
     range.collapse(true);
     selection?.removeAllRanges();
     selection?.addRange(range);
-    if (selectInserted) {
-      selectEditorObject(frame);
-    } else {
-      clearActiveEditorObjects();
-      editorSelectionRef.current = range.cloneRange();
-    }
+    clearActiveEditorObjects();
+    editorSelectionRef.current = range.cloneRange();
     if (sync) syncEditorContent();
     saveEditorSelection();
   }
@@ -5029,6 +5189,11 @@ function App() {
   }
 
   function handleEditorMouseDown(event) {
+    if (placeEditorCaretFromMediaSideClick(event)) {
+      event.preventDefault();
+      return;
+    }
+
     const handle = event.target.closest?.('.editorImageResizeHandle');
     if (handle && editorRef.current?.contains(handle)) {
       const frame = handle.closest('.editorImageFrame');
@@ -5468,36 +5633,37 @@ function App() {
       }
     }
 
-    // Prevent deletion of the automatic first timestamp block.
+    // Prevent deletion of the first timestamp block in each workflow body.
     if ((event.key === 'Backspace' || event.key === 'Delete') && editorRef.current) {
-      const undeletableTs = editorRef.current.querySelector('[data-undeletable="true"]');
-      if (undeletableTs && editorRef.current.contains(undeletableTs)) {
+      normalizeEditorTimestampProtection();
+      const undeletableTimestamps = Array.from(editorRef.current.querySelectorAll('[data-undeletable="true"]'));
+      if (undeletableTimestamps.length > 0) {
         const sel = window.getSelection();
         if (sel?.rangeCount) {
           const range = sel.getRangeAt(0);
           if (range.collapsed) {
             const container = range.commonAncestorContainer;
-            // Backspace at start of the element right after the timestamp
-            if (event.key === 'Backspace') {
-              const next = undeletableTs.nextSibling;
-              if (next && (container === next || container.parentNode === next) && range.startOffset === 0) {
-                event.preventDefault();
-                return;
+            for (const undeletableTs of undeletableTimestamps) {
+              // Backspace at start of the element right after the timestamp
+              if (event.key === 'Backspace') {
+                const next = undeletableTs.nextSibling;
+                if (next && (container === next || container.parentNode === next) && range.startOffset === 0) {
+                  event.preventDefault();
+                  return;
+                }
               }
-            }
-            // Delete at end of the element right before the timestamp
-            if (event.key === 'Delete') {
-              const prev = undeletableTs.previousSibling;
-              if (prev && (container === prev || container.parentNode === prev) && range.startOffset === (container.textContent?.length ?? 0)) {
-                event.preventDefault();
-                return;
+              // Delete at end of the element right before the timestamp
+              if (event.key === 'Delete') {
+                const prev = undeletableTs.previousSibling;
+                if (prev && (container === prev || container.parentNode === prev) && range.startOffset === (container.textContent?.length ?? 0)) {
+                  event.preventDefault();
+                  return;
+                }
               }
             }
           } else {
             // Non-collapsed selection that includes the timestamp
-            const tempDiv = document.createElement('div');
-            tempDiv.appendChild(range.cloneContents());
-            if (tempDiv.querySelector('[data-undeletable="true"]')) {
+            if (undeletableTimestamps.some((timestamp) => rangeIntersectsNode(range, timestamp))) {
               event.preventDefault();
               return;
             }
@@ -5520,6 +5686,29 @@ function App() {
 
     const selection = window.getSelection();
     const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    const selectedTimestamp = getSelectedEditorTimestamp(range);
+    if (selectedTimestamp) {
+      event.preventDefault();
+      if (isDeletableEditorTimestamp(selectedTimestamp)) {
+        removeEditorNodeAndPlaceCaret(selectedTimestamp);
+        syncEditorContentAndFlushSave();
+      }
+      editorRef.current?.focus();
+      return;
+    }
+
+    const adjacentTimestamp = getSiblingDeletableTimestampFromCaret(
+      range,
+      event.key === 'Backspace' ? 'previous' : 'next',
+    );
+    if (adjacentTimestamp) {
+      event.preventDefault();
+      removeEditorNodeAndPlaceCaret(adjacentTimestamp);
+      syncEditorContentAndFlushSave();
+      editorRef.current?.focus();
+      return;
+    }
+
     const adjacentObject = getSiblingEditorObjectFromCaret(
       range,
       event.key === 'Backspace' ? 'previous' : 'next',
