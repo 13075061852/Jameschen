@@ -934,6 +934,8 @@ function App() {
       return;
     }
     saveCurrentEditorContent();
+    setLeftCollapsed(true);
+    setRightCollapsed(true);
     setMainView('calendar');
   }
 
