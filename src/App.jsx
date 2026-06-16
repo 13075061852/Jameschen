@@ -80,10 +80,7 @@ import {
   MIN_RIGHT_PANEL_WIDTH,
   MIN_CENTER_PANEL_WIDTH,
   LOCAL_STORAGE_SAFE_CUSTOMER_SIZE,
-  CUSTOMER_SAVE_DEBOUNCE_MS,
-  INITIAL_CUSTOMER_RENDER_LIMIT,
   CUSTOMER_RENDER_INCREMENT,
-  COLLAPSED_CUSTOMER_RENDER_LIMIT,
   EDITOR_HISTORY_LIMIT,
   EDITOR_DRAGGABLE_OBJECT_SELECTOR,
   gradeMap,
@@ -91,28 +88,25 @@ import {
 } from './config/constants.js';
 
 import { formatLocalDate, shiftMonth } from './utils/date.js';
-import { makeCalendarDays, buildCalendarActivities } from './utils/calendar.js';
+import { makeCalendarDays } from './utils/calendar.js';
 import { toEditorHtml, getTextLengthFromHtml, getPlainTextFromHtml, escapeHtml } from './utils/html.js';
 import { trimWorkflowHtmlEdges, normalizeWorkflowDocumentContent, hideFirstWorkflowTimestampForMergedView, normalizeEditorMediaSourcesInElement, stripTransientObjectUrlsFromCustomers, stripAttachmentDataForLocalStorage } from './utils/editorDom.js';
 import { isStoredAssetUrl, getAttachmentKind, dataUrlToArrayBuffer, dataUrlToBlobUrl, dataUrlToBlob, imageDataUrlToPngBlob, formatFileSize } from './utils/asset.js';
 import { makeCustomerDuplicateKeys, isDuplicateCustomer, getImportStats } from './utils/customer.js';
-import { markWorkflowContentEdited, mergeCustomersWithLatestData } from './utils/workflow.js';
+import { markWorkflowContentEdited } from './utils/workflow.js';
 import { archiveFields, makeArchiveDraft, getArchiveFieldLabel, normalizeFieldLabels } from './utils/archive.js';
 import { makeBackupPayload, collectAssetIdsFromCustomers, readAssetsForBackup, importBackupAssets } from './utils/backup.js';
 import { normalizeEditorUrl } from './utils/url.js';
 
-import { readCustomersFromIndexedDb, normalizeCustomers } from './db/customerDb.js';
+import { normalizeCustomers } from './db/customerDb.js';
 import { saveDataUrlAsset, resolveStoredAssetDataUrl, resolveStoredAssetDataUrlWithRetry } from './db/assetStore.js';
 import {
   readInitialCustomers,
-  saveCustomers,
   cleanupUnusedAssets,
   readInitialLayout,
   saveLayout,
   readInitialViewState,
   saveViewState,
-  readInitialGlobalFieldLabels,
-  saveGlobalFieldLabels,
 } from './db/storage.js';
 
 import CalendarView from './components/calendar/CalendarView.jsx';
@@ -131,32 +125,24 @@ import EmptyState from './components/common/EmptyState.jsx';
 import ConfirmDialog from './components/dialogs/ConfirmDialog.jsx';
 import ImportBackupDialog from './components/dialogs/ImportBackupDialog.jsx';
 import AttachmentPreviewDialog from './components/dialogs/AttachmentPreviewDialog.jsx';
+import useCustomerStore from './hooks/useCustomerStore.js';
 
 
 function App() {
   const initialLayout = readInitialLayout();
   const initialViewState = readInitialViewState();
-  const [customers, setCustomers] = useState(readInitialCustomers);
-  const customersRef = useRef(customers);
-  const userModifiedSinceLoad = useRef(false);
-  const [globalFieldLabels, setGlobalFieldLabels] = useState(readInitialGlobalFieldLabels);
-  const [selectedId, setSelectedId] = useState(() => initialViewState.selectedId || customers[0]?.id || '');
+  const initialCustomersForView = useMemo(readInitialCustomers, []);
+  const [selectedId, setSelectedId] = useState(() => initialViewState.selectedId || initialCustomersForView[0]?.id || '');
   const [selectedWorkflowId, setSelectedWorkflowId] = useState(() => initialViewState.selectedWorkflowId || '');
   const [selectedWorkflowIds, setSelectedWorkflowIds] = useState(() => initialViewState.selectedWorkflowIds || []);
   const [workflowViewMode, setWorkflowViewMode] = useState(() => initialViewState.workflowViewMode || 'single');
   const [mainView, setMainView] = useState(() => initialViewState.mainView || 'workspace');
   const [calendarMonth, setCalendarMonth] = useState(() => initialViewState.calendarMonth || formatLocalDate(new Date()).slice(0, 7));
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(() => initialViewState.selectedCalendarDate || formatLocalDate(new Date()));
-  const [query, setQuery] = useState('');
-  const [gradeFilter, setGradeFilter] = useState('全部');
-  const [customerRenderLimit, setCustomerRenderLimit] = useState(INITIAL_CUSTOMER_RENDER_LIMIT);
-  const [noteTitleDraft, setNoteTitleDraft] = useState('');
   const [editingWorkflowTitleId, setEditingWorkflowTitleId] = useState('');
   const [workflowSortOrder, setWorkflowSortOrder] = useState('desc');
   const [archiveEditing, setArchiveEditing] = useState(false);
   const [archiveDraft, setArchiveDraft] = useState(null);
-  const [batchMode, setBatchMode] = useState(false);
-  const [batchSelectedIds, setBatchSelectedIds] = useState(new Set());
   const [leftCollapsed, setLeftCollapsed] = useState(initialLayout.leftCollapsed);
   const [rightCollapsed, setRightCollapsed] = useState(initialLayout.rightCollapsed);
   const [leftPanelWidth, setLeftPanelWidth] = useState(initialLayout.leftPanelWidth);
@@ -179,7 +165,6 @@ function App() {
   const [activeEditorTextColor, setActiveEditorTextColor] = useState(DEFAULT_EDITOR_TEXT_COLOR);
   const [activeEditorBackgroundColor, setActiveEditorBackgroundColor] = useState(DEFAULT_EDITOR_BACKGROUND_COLOR);
   const [editorHydrationVersion, setEditorHydrationVersion] = useState(0);
-  const [customerStoreHydrated, setCustomerStoreHydrated] = useState(false);
   const boardRef = useRef(null);
   const editorRef = useRef(null);
   const editorSelectionRef = useRef(null);
@@ -204,7 +189,6 @@ function App() {
   });
   const workflowSelectionByCustomerRef = useRef(new Map());
   const mergedWorkflowSelectionByCustomerRef = useRef(new Map());
-  const customerSaveTimerRef = useRef(null);
   const editorObjectUrlsRef = useRef(new Set());
   const formatPainterRef = useRef(null);
   const dragSensors = useSensors(
@@ -214,6 +198,50 @@ function App() {
       },
     }),
   );
+
+  const {
+    customers,
+    customersRef,
+    customerStoreHydrated,
+    globalFieldLabels,
+    query, setQuery,
+    gradeFilter, setGradeFilter,
+    customerRenderLimit, setCustomerRenderLimit,
+    batchMode,
+    batchSelectedIds, setBatchSelectedIds,
+    noteTitleDraft, setNoteTitleDraft,
+    commitCustomers,
+    commitCustomersFromUpdater,
+    flushCustomersSave,
+    commitGlobalFieldLabels,
+    updateCustomer,
+    addCustomer: addCustomerToStore,
+    createMentionCustomer: createMentionCustomerInStore,
+    togglePinCustomer,
+    enterBatchMode,
+    exitBatchMode,
+    toggleBatchSelectCustomer,
+    filteredCustomers,
+    visibleCustomers,
+    collapsedVisibleCustomers,
+    hasMoreCustomers,
+    filterCustomersByText,
+    stats,
+    calendarActivitiesByDate,
+  } = useCustomerStore({
+    getEditorContentFlush: () => saveCurrentEditorContent(),
+    viewStateCallbacks: {
+      getSelectedId: () => selectedId,
+      onHydrated: (mergedCustomers) => {
+        setEditorHydrationVersion((version) => version + 1);
+        if (!mergedCustomers.some((customer) => customer.id === selectedId)) {
+          setSelectedId(mergedCustomers[0]?.id ?? '');
+          setSelectedWorkflowId('');
+          setSelectedWorkflowIds([]);
+        }
+      },
+    },
+  });
 
   const selectedCustomer = customers.find((customer) => customer.id === selectedId) ?? null;
   const archiveCustomer = archiveEditing && archiveDraft?.id === selectedCustomer?.id
@@ -268,14 +296,6 @@ function App() {
       item.status ?? '',
     ].join(':')).join('|')
     : '';
-  const singleWorkflowMetaKey = !isMergedWorkflowView && selectedWorkflow
-    ? [
-      selectedWorkflow.id,
-      selectedWorkflow.date ?? '',
-      selectedWorkflow.title ?? selectedWorkflow.content ?? '沟通记录',
-      selectedWorkflow.status ?? '',
-    ].join(':')
-    : '';
   const editorKey = isMergedWorkflowView
     ? `merged:${selectedCustomer?.id ?? 'empty'}:${selectedWorkflowIds.join(',')}`
     : selectedWorkflow
@@ -290,39 +310,9 @@ function App() {
     ? selectedWorkflow.title ?? selectedWorkflow.content ?? '沟通记录'
     : '';
 
-  const filteredCustomers = useMemo(() => {
-    return customers
-      .filter((customer) => {
-        const haystack = `${customer.company} ${customer.contact} ${customer.country} ${customer.email}`.toLowerCase();
-        return haystack.includes(query.trim().toLowerCase()) && (gradeFilter === '全部' || customer.grade === gradeFilter);
-      })
-      .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
-  }, [customers, gradeFilter, query]);
-  const visibleCustomers = useMemo(() => (
-    filteredCustomers.slice(0, customerRenderLimit)
-  ), [customerRenderLimit, filteredCustomers]);
-  const collapsedVisibleCustomers = useMemo(() => (
-    filteredCustomers.slice(0, COLLAPSED_CUSTOMER_RENDER_LIMIT)
-  ), [filteredCustomers]);
-  const hasMoreCustomers = filteredCustomers.length > visibleCustomers.length;
-
   const filteredMentionCustomers = useMemo(() => {
-    const base = mentionQuery.trim()
-      ? customers.filter((customer) =>
-          `${customer.company} ${customer.contact} ${customer.country}`.toLowerCase().includes(mentionQuery.toLowerCase())
-        )
-      : customers;
-    return base;
-  }, [customers, mentionQuery]);
-
-  const stats = useMemo(() => {
-    return {
-      total: customers.length,
-      active: customers.filter((customer) => customer.timeline?.[0]?.status !== '暂停').length,
-    };
-  }, [customers]);
-
-  const calendarActivitiesByDate = useMemo(() => buildCalendarActivities(customers), [customers]);
+    return filterCustomersByText(mentionQuery);
+  }, [filterCustomersByText, mentionQuery]);
   const calendarDays = useMemo(
     () => makeCalendarDays(calendarMonth, calendarActivitiesByDate),
     [calendarActivitiesByDate, calendarMonth],
@@ -344,21 +334,12 @@ function App() {
   }), [leftCollapsed, rightCollapsed, leftPanelWidth, rightPanelWidth]);
 
   useEffect(() => {
-    customersRef.current = customers;
-  }, [customers]);
-
-  useEffect(() => {
     if (!selectedId || !selectedWorkflowId) return;
     const workflows = customers.find((customer) => customer.id === selectedId)?.timeline ?? [];
     if (workflows.some((workflow) => workflow.id === selectedWorkflowId)) {
       workflowSelectionByCustomerRef.current.set(selectedId, selectedWorkflowId);
     }
   }, [customers, selectedId, selectedWorkflowId]);
-
-  useEffect(() => {
-    setCustomerRenderLimit(INITIAL_CUSTOMER_RENDER_LIMIT);
-    exitBatchMode();
-  }, [gradeFilter, query]);
 
   useEffect(() => {
     if (mainView !== 'workspace' || !editorRef.current || isMergedWorkflowView) return;
@@ -370,7 +351,7 @@ function App() {
     normalizeEditorMediaFramePlacement();
     editorSelectionRef.current = null;
     resetEditorHistory();
-  }, [mainView, editorKey, isMergedWorkflowView, singleWorkflowMetaKey, editorHydrationVersion]);
+  }, [mainView, editorKey, isMergedWorkflowView, selectedWorkflowId, editorHydrationVersion]);
 
   useEffect(() => {
     if (mainView !== 'workspace' || !editorRef.current || !isMergedWorkflowView) return;
@@ -388,7 +369,6 @@ function App() {
   useEffect(() => () => {
     cancelAnimationFrame(imageDragRafRef.current);
     clearTimeout(editorSyncTimerRef.current);
-    clearTimeout(customerSaveTimerRef.current);
     editorObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
     editorObjectUrlsRef.current.clear();
     removeCustomImageDragListeners();
@@ -401,11 +381,21 @@ function App() {
   }, []);
 
   useEffect(() => {
+    editorObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    editorObjectUrlsRef.current.clear();
+  }, [selectedId]);
+
+  useEffect(() => {
     const editor = editorRef.current;
     if (mainView !== 'workspace' || !editor) return undefined;
 
     function handleNativeEditorInput() {
-      saveCurrentEditorContent();
+      clearTimeout(editorSyncTimerRef.current);
+      editorDirtyRef.current = true;
+      editorSyncTimerRef.current = setTimeout(() => {
+        editorSyncTimerRef.current = null;
+        syncEditorContent();
+      }, 400);
     }
 
     editor.addEventListener('input', handleNativeEditorInput);
@@ -471,54 +461,6 @@ function App() {
   }, [leftCollapsed, rightCollapsed, leftPanelWidth, rightPanelWidth,
     selectedId, selectedWorkflowId, selectedWorkflowIds, workflowViewMode, mainView, calendarMonth, selectedCalendarDate,
     globalFieldLabels]);
-
-  useEffect(() => {
-    let canceled = false;
-
-    readCustomersFromIndexedDb()
-      .then((storedCustomers) => {
-        if (canceled || !storedCustomers) return;
-        // If the user has already modified data before IndexedDB loaded,
-        // don't overwrite their changes to prevent data loss.
-        if (userModifiedSinceLoad.current) {
-          console.warn('Skipped IndexedDB overwrite because user has already modified data');
-          return;
-        }
-        const currentCustomers = customersRef.current;
-        const normalizedStoredCustomers = stripTransientObjectUrlsFromCustomers(storedCustomers);
-        const selectedExistsInCurrent = currentCustomers.some((customer) => customer.id === selectedId);
-        const selectedExistsInStored = normalizedStoredCustomers.some((customer) => customer.id === selectedId);
-        if (selectedId && selectedExistsInCurrent && !selectedExistsInStored) {
-          saveCustomers(currentCustomers);
-          return;
-        }
-        // Merge: prefer the newest data by lastEditedAt. IndexedDB writes are
-        // async and may not have flushed before a page refresh, so IndexedDB
-        // data can be stale and must not unconditionally overwrite the sync
-        // localStorage data (read in readInitialCustomers).
-        const mergedCustomers = mergeCustomersWithLatestData(currentCustomers, normalizedStoredCustomers);
-        setCustomers(mergedCustomers);
-        customersRef.current = mergedCustomers;
-        setEditorHydrationVersion((version) => version + 1);
-        if (!mergedCustomers.some((customer) => customer.id === selectedId)) {
-          setSelectedId(mergedCustomers[0]?.id ?? '');
-          setSelectedWorkflowId('');
-          setSelectedWorkflowIds([]);
-        }
-      })
-      .catch((error) => {
-        console.warn('Failed to load customers from IndexedDB', error);
-      })
-      .finally(() => {
-        if (!canceled) {
-          setCustomerStoreHydrated(true);
-        }
-      });
-
-    return () => {
-      canceled = true;
-    };
-  }, []);
 
   useEffect(() => {
     setArchiveEditing(false);
@@ -620,47 +562,6 @@ function App() {
       document.body.style.removeProperty('user-select');
     };
   }, [activeResizer, leftCollapsed, leftPanelWidth, rightCollapsed, rightPanelWidth]);
-
-  function commitCustomers(nextCustomers, immediate = false) {
-    userModifiedSinceLoad.current = true;
-    setCustomers(nextCustomers);
-    customersRef.current = nextCustomers;
-    scheduleCustomersSave(nextCustomers, immediate);
-  }
-
-  function commitCustomersFromUpdater(updater, immediate = false) {
-    userModifiedSinceLoad.current = true;
-    const nextCustomers = updater(customersRef.current);
-    customersRef.current = nextCustomers;
-    setCustomers(nextCustomers);
-    scheduleCustomersSave(nextCustomers, immediate);
-    return nextCustomers;
-  }
-
-  function scheduleCustomersSave(nextCustomers, immediate = false) {
-    clearTimeout(customerSaveTimerRef.current);
-    customerSaveTimerRef.current = null;
-    if (immediate) {
-      saveCustomers(nextCustomers);
-      return;
-    }
-    customerSaveTimerRef.current = setTimeout(() => {
-      customerSaveTimerRef.current = null;
-      saveCustomers(customersRef.current);
-    }, CUSTOMER_SAVE_DEBOUNCE_MS);
-  }
-
-  function flushCustomersSave() {
-    if (!customerSaveTimerRef.current) return;
-    clearTimeout(customerSaveTimerRef.current);
-    customerSaveTimerRef.current = null;
-    saveCustomers(customersRef.current);
-  }
-
-  function commitGlobalFieldLabels(nextFieldLabels) {
-    setGlobalFieldLabels(nextFieldLabels);
-    saveGlobalFieldLabels(nextFieldLabels);
-  }
 
   function getCustomersWithCurrentEditorContent(sourceCustomers = customersRef.current) {
     if (!editorRef.current || !selectedCustomer) return sourceCustomers;
@@ -918,12 +819,6 @@ function App() {
     reader.readAsText(file, 'UTF-8');
   }
 
-  function updateCustomer(id, patch) {
-    commitCustomersFromUpdater((currentCustomers) => (
-      currentCustomers.map((customer) => (customer.id === id ? { ...customer, ...patch } : customer))
-    ));
-  }
-
   function rememberSelectedWorkflowForCustomer(customerId = selectedId, workflowId = selectedWorkflowId) {
     if (customerId && workflowId) {
       workflowSelectionByCustomerRef.current.set(customerId, workflowId);
@@ -1097,72 +992,17 @@ function App() {
   }
 
   function addCustomer() {
-    const id = `c-${Date.now()}`;
-    const today = new Date().toISOString().slice(0, 10);
-    const companyName = noteTitleDraft.trim() || '新客户';
-    const nextCustomer = {
-      id,
-      serialNumber: String(customers.length + 1),
-      pinned: false,
-      company: companyName,
-      grade: 'C',
-      country: '',
-      website: '',
-      contact: '',
-      email: '',
-      phone: '',
-      fax: '',
-      otherContact: '',
-      remark: '',
-      backup1: '',
-      backup2: '',
-      backup3: '',
-      backup4: '',
-      lastFollowDate: today,
-      reminderDays: '30',
-      messyNotes: '',
-      timeline: [],
-    };
-    const nextCustomers = [nextCustomer, ...customersRef.current];
-    commitCustomers(nextCustomers, true);
+    const id = addCustomerToStore(() => saveCurrentEditorContent());
     setSelectedId(id);
     setSelectedWorkflowId('');
     setSelectedWorkflowIds([]);
     saveViewState({ selectedId: id, selectedWorkflowId: '', selectedWorkflowIds: [], workflowViewMode });
     setArchiveEditing(false);
     setArchiveDraft(null);
-    setNoteTitleDraft('');
   }
 
   function createMentionCustomer(name) {
-    const id = `c-${Date.now()}`;
-    const today = new Date().toISOString().slice(0, 10);
-    const companyName = name.trim() || '新客户';
-    const nextCustomer = {
-      id,
-      serialNumber: String((customersRef.current?.length ?? 0) + 1),
-      pinned: false,
-      company: companyName,
-      grade: 'C',
-      country: '',
-      website: '',
-      contact: '',
-      email: '',
-      phone: '',
-      fax: '',
-      otherContact: '',
-      remark: '',
-      backup1: '',
-      backup2: '',
-      backup3: '',
-      backup4: '',
-      lastFollowDate: today,
-      reminderDays: '30',
-      messyNotes: '',
-      timeline: [],
-    };
-    const nextCustomers = [nextCustomer, ...(customersRef.current ?? [])];
-    commitCustomers(nextCustomers, true);
+    const id = createMentionCustomerInStore(name);
     // Auto-select the new customer for distribution
     setMentionSelectedIds((current) => [...current, id]);
     setMentionQuery('');
@@ -1390,36 +1230,6 @@ function App() {
       setArchiveEditing(false);
       setArchiveDraft(null);
     }
-  }
-
-  function togglePinCustomer(customerId) {
-    commitCustomersFromUpdater((currentCustomers) =>
-      currentCustomers.map((c) =>
-        c.id === customerId ? { ...c, pinned: !c.pinned } : c
-      )
-    );
-  }
-
-  function enterBatchMode() {
-    setBatchMode(true);
-    setBatchSelectedIds(new Set());
-  }
-
-  function exitBatchMode() {
-    setBatchMode(false);
-    setBatchSelectedIds(new Set());
-  }
-
-  function toggleBatchSelectCustomer(customerId) {
-    setBatchSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(customerId)) {
-        next.delete(customerId);
-      } else {
-        next.add(customerId);
-      }
-      return next;
-    });
   }
 
   function requestBatchDelete() {
@@ -1661,6 +1471,16 @@ function App() {
     return [];
   }
 
+  function canvasHasTransparency(canvas) {
+    const context = canvas.getContext('2d');
+    if (!context) return false;
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    for (let index = 3; index < pixels.length; index += 4) {
+      if (pixels[index] < 255) return true;
+    }
+    return false;
+  }
+
   async function handleExportPDF() {
     const workflows = getExportWorkflows();
     if (workflows.length === 0) return;
@@ -1735,8 +1555,11 @@ function App() {
         const ctx = sliceCanvas.getContext('2d');
         ctx.drawImage(canvas, 0, sourceY, canvas.width, sourceHeight, 0, 0, canvas.width, sourceHeight);
 
-        const sliceDataUrl = sliceCanvas.toDataURL('image/jpeg', 0.92);
-        pdf.addImage(sliceDataUrl, 'JPEG', margin, margin, imgWidth, sliceHeight);
+        const hasTransparency = canvasHasTransparency(sliceCanvas);
+        const sliceDataUrl = hasTransparency
+          ? sliceCanvas.toDataURL('image/png')
+          : sliceCanvas.toDataURL('image/jpeg', 0.92);
+        pdf.addImage(sliceDataUrl, hasTransparency ? 'PNG' : 'JPEG', margin, margin, imgWidth, sliceHeight);
 
         sourceY += sourceHeight;
         remainingHeight -= sliceHeight;
@@ -1852,7 +1675,7 @@ function App() {
       ? timestampHtml + contentHtml
       : timestampHtml;
     const item = {
-      id: `t-${Date.now()}`,
+      id: `t-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       date,
       title,
       content,
@@ -2008,9 +1831,7 @@ function App() {
     const previousHtml = history.undoStack.pop();
     if (typeof previousHtml !== 'string') {
       restoreEditorSelection();
-      const usedNativeUndo = document.execCommand('undo');
-      syncEditorContent();
-      return usedNativeUndo;
+      return false;
     }
     history.redoStack.push(currentHtml);
     trimEditorHistoryStack(history.redoStack);
@@ -2025,9 +1846,7 @@ function App() {
     const nextHtml = history.redoStack.pop();
     if (typeof nextHtml !== 'string') {
       restoreEditorSelection();
-      const usedNativeRedo = document.execCommand('redo');
-      syncEditorContent();
-      return usedNativeRedo;
+      return false;
     }
     history.undoStack.push(currentHtml);
     trimEditorHistoryStack(history.undoStack);
@@ -2664,7 +2483,13 @@ function App() {
       && element.dataset.undeletable !== 'true';
   }
 
-  function getSiblingDeletableTimestampFromCaret(range, direction) {
+  function isUndeletableEditorTimestamp(element) {
+    return element instanceof HTMLElement
+      && element.classList.contains('editorTimestampBlock')
+      && element.dataset.undeletable === 'true';
+  }
+
+  function getSiblingTimestampFromCaret(range, direction, predicate) {
     const editor = editorRef.current;
     if (!editor || !range?.collapsed) return null;
 
@@ -2687,7 +2512,7 @@ function App() {
 
     while (current && current !== editor) {
       while (sibling) {
-        if (isDeletableEditorTimestamp(sibling) && editor.contains(sibling)) return sibling;
+        if (predicate(sibling) && editor.contains(sibling)) return sibling;
         const hasMeaningfulText = sibling.nodeType === Node.TEXT_NODE
           && Boolean((sibling.textContent || '').replace(/\u200b/g, '').trim());
         if (hasMeaningfulText) return null;
@@ -2699,6 +2524,14 @@ function App() {
     }
 
     return null;
+  }
+
+  function getSiblingDeletableTimestampFromCaret(range, direction) {
+    return getSiblingTimestampFromCaret(range, direction, isDeletableEditorTimestamp);
+  }
+
+  function getSiblingUndeletableTimestampFromCaret(range, direction) {
+    return getSiblingTimestampFromCaret(range, direction, isUndeletableEditorTimestamp);
   }
 
   function getSelectedEditorTimestamp(range) {
@@ -2777,19 +2610,24 @@ function App() {
   }
 
   function getEdgeEditorObject(node, direction) {
-    let current = node;
-    while (current) {
-      if (isEditorObjectElement(current)) return current;
-      if (current.nodeType === Node.TEXT_NODE) {
-        if ((current.textContent || '').replace(/\u200b/g, '').trim()) return null;
-      } else if (current.nodeType === Node.ELEMENT_NODE) {
-        const children = Array.from(current.childNodes);
-        if (children.length > 0) {
-          current = direction === 'previous' ? children.at(-1) : children[0];
-          continue;
-        }
+    if (!node) return null;
+    if (isEditorObjectElement(node)) return node;
+    if (node.nodeType === Node.TEXT_NODE) {
+      return (node.textContent || '').replace(/\u200b/g, '').trim() ? null : null;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return null;
+
+    const children = Array.from(node.childNodes);
+    const orderedChildren = direction === 'previous' ? children.reverse() : children;
+    for (const child of orderedChildren) {
+      if (isEditorObjectElement(child)) return child;
+      if (child.nodeType === Node.TEXT_NODE) {
+        if ((child.textContent || '').replace(/\u200b/g, '').trim()) return null;
+        continue;
       }
-      return null;
+      const object = getEdgeEditorObject(child, direction);
+      if (object) return object;
+      if ((child.textContent || '').replace(/\u200b/g, '').trim()) return null;
     }
     return null;
   }
@@ -3101,6 +2939,18 @@ function App() {
     return Boolean(fragment.querySelector?.('.editorImageFrame, .editorVideoFrame, .editorAttachmentFrame'));
   }
 
+  function getEditorLineHeightForFontSize(fontSize = '') {
+    const size = Number.parseFloat(fontSize);
+    if (!Number.isFinite(size) || size <= 0) return '';
+    return `${Math.round(size * 1.65 * 100) / 100}px`;
+  }
+
+  function normalizeEditorTextStyle(style = {}) {
+    if (!style.fontSize || style.lineHeight) return style;
+    const lineHeight = getEditorLineHeightForFontSize(style.fontSize);
+    return lineHeight ? { ...style, lineHeight } : style;
+  }
+
   function stripInlineFormatting(container) {
     // Unwrap formatting tags, preserving their text content
     const formattingTags = ['B', 'STRONG', 'I', 'EM', 'U', 'FONT'];
@@ -3228,6 +3078,13 @@ function App() {
       }
     }
 
+    if (style.fontSize && !style.lineHeight) {
+      const lineHeight = getEditorLineHeightForFontSize(style.fontSize);
+      if (lineHeight) {
+        style.lineHeight = lineHeight;
+      }
+    }
+
     // Font family
     if (!style.fontFamily) {
       const defaultFontFamily = defaults?.fontFamily || '';
@@ -3238,6 +3095,7 @@ function App() {
   }
 
   function applyEditorStyle(style) {
+    const normalizedStyle = normalizeEditorTextStyle(style);
     if (!restoreEditorSelection()) return;
     const selection = window.getSelection();
     if (!selection?.rangeCount) return;
@@ -3248,19 +3106,19 @@ function App() {
       saveEditorSelection();
       return;
     }
-    const styleKeys = Object.keys(style);
+    const styleKeys = Object.keys(normalizedStyle);
     const canUseNativeInlineCommand = styleKeys.length > 0
       && styleKeys.every((key) => key === 'color' || key === 'backgroundColor');
 
-    if (range.collapsed || canUseNativeInlineCommand) {
+    if (canUseNativeInlineCommand) {
       document.execCommand('styleWithCSS', false, true);
-      if (style.color) {
-        document.execCommand('foreColor', false, style.color);
+      if (normalizedStyle.color) {
+        document.execCommand('foreColor', false, normalizedStyle.color);
       }
-      if (style.backgroundColor) {
-        const appliedHighlight = document.execCommand('hiliteColor', false, style.backgroundColor);
+      if (normalizedStyle.backgroundColor) {
+        const appliedHighlight = document.execCommand('hiliteColor', false, normalizedStyle.backgroundColor);
         if (!appliedHighlight) {
-          document.execCommand('backColor', false, style.backgroundColor);
+          document.execCommand('backColor', false, normalizedStyle.backgroundColor);
         }
       }
       prepareEditorStoredAssetSources();
@@ -3268,11 +3126,12 @@ function App() {
       syncEditorContent();
       return;
     }
+    if (range.collapsed) return;
     const styledSpan = document.createElement('span');
-    Object.assign(styledSpan.style, style);
+    Object.assign(styledSpan.style, normalizedStyle);
     styledSpan.appendChild(range.extractContents());
     clearNestedEditorStyles(styledSpan, styleKeys);
-    applyStyleToNestedEditorElements(styledSpan, style);
+    applyStyleToNestedEditorElements(styledSpan, normalizedStyle);
     range.insertNode(styledSpan);
 
     // Unwrap redundant ancestor spans that became empty after extractContents().
@@ -4729,6 +4588,16 @@ function App() {
         removeEditorNodeAndPlaceCaret(selectedTimestamp);
         syncEditorContentAndFlushSave();
       }
+      editorRef.current?.focus();
+      return;
+    }
+
+    const adjacentUndeletableTimestamp = getSiblingUndeletableTimestampFromCaret(
+      range,
+      event.key === 'Backspace' ? 'previous' : 'next',
+    );
+    if (adjacentUndeletableTimestamp) {
+      event.preventDefault();
       editorRef.current?.focus();
       return;
     }

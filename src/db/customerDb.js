@@ -31,7 +31,9 @@ export function openCustomerDb() {
   });
 }
 
-export async function saveCustomersToIndexedDb(customers) {
+let customerWriteQueue = Promise.resolve();
+
+async function writeCustomersToIndexedDb(customers) {
   const db = await openCustomerDb();
   try {
     await new Promise((resolve, reject) => {
@@ -44,6 +46,15 @@ export async function saveCustomersToIndexedDb(customers) {
   } finally {
     db.close();
   }
+}
+
+export function saveCustomersToIndexedDb(customers) {
+  customerWriteQueue = customerWriteQueue
+    .then(() => writeCustomersToIndexedDb(customers))
+    .catch((error) => {
+      console.warn('IndexedDB customer write failed', error);
+    });
+  return customerWriteQueue;
 }
 
 export async function readCustomersFromIndexedDb() {

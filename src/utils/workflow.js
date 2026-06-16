@@ -5,7 +5,10 @@
 
 import { parseActivityDate } from './date.js';
 import { toEditorHtml } from './html.js';
-import { stripTransientObjectUrlsFromEditorHtml } from './editorDom.js';
+import {
+  normalizeWorkflowDocumentContent,
+  stripTransientObjectUrlsFromEditorHtml,
+} from './editorDom.js';
 
 export function getLegacyWorkflowEditHistory(item = {}) {
   return Array.isArray(item.editHistory)
