@@ -736,8 +736,8 @@
 
 .messyContent .editorAttachmentFrame {
   position: relative;
-  width: min(300px, 100%);
-  max-width: 100%;
+  width: fit-content;
+  max-width: min(220px, 100%);
   min-height: 46px;
   box-sizing: border-box;
   margin: 8px 8px 8px 0;
@@ -821,13 +821,14 @@
 
 .editorAttachmentText {
   min-width: 0;
-  flex: 1;
+  flex: 0 1 auto;
   display: grid;
   gap: 2px;
   line-height: 1.2;
 }
 
 .editorAttachmentText strong {
+  max-width: 132px;
   overflow: hidden;
   color: #111111;
   font-size: 13px;

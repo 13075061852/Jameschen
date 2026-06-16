@@ -2513,9 +2513,15 @@ function App() {
     while (current && current !== editor) {
       while (sibling) {
         if (predicate(sibling) && editor.contains(sibling)) return sibling;
+        if (isEditorObjectElement(sibling) || sibling.querySelector?.(EDITOR_DRAGGABLE_OBJECT_SELECTOR)) {
+          return null;
+        }
         const hasMeaningfulText = sibling.nodeType === Node.TEXT_NODE
           && Boolean((sibling.textContent || '').replace(/\u200b/g, '').trim());
         if (hasMeaningfulText) return null;
+        const hasMeaningfulElementText = sibling.nodeType === Node.ELEMENT_NODE
+          && Boolean((sibling.textContent || '').replace(/\u200b/g, '').trim());
+        if (hasMeaningfulElementText) return null;
         sibling = direction === 'previous' ? sibling.previousSibling : sibling.nextSibling;
       }
       current = current.parentNode;
@@ -2556,6 +2562,26 @@ function App() {
       selection?.addRange(nextRange);
       editorSelectionRef.current = nextRange.cloneRange();
     }
+  }
+
+  function removeEditorObjectAndPlaceCaret(object) {
+    if (!object || !editorRef.current?.contains(object)) return false;
+    const parent = object.parentNode;
+    const nextOffset = parent ? Array.prototype.indexOf.call(parent.childNodes, object) : 0;
+    object.remove();
+    if (parent && editorRef.current.contains(parent)) {
+      const selection = window.getSelection();
+      const nextRange = document.createRange();
+      nextRange.setStart(parent, Math.min(nextOffset, parent.childNodes.length));
+      nextRange.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(nextRange);
+      editorSelectionRef.current = nextRange.cloneRange();
+    }
+    syncEditorContent();
+    cleanupUnusedAssets(customersRef.current);
+    editorRef.current.focus();
+    return true;
   }
 
   function getOrCreateInlineMediaCaretNode(frame, side) {
@@ -2665,6 +2691,20 @@ function App() {
       current = current.parentNode;
       if (!current || current === editor) break;
       sibling = direction === 'previous' ? current.previousSibling : current.nextSibling;
+    }
+
+    const probeRange = document.createRange();
+    if (direction === 'previous') {
+      probeRange.setStart(editor, 0);
+      probeRange.setEnd(range.startContainer, range.startOffset);
+    } else {
+      probeRange.setStart(range.startContainer, range.startOffset);
+      probeRange.setEnd(editor, editor.childNodes.length);
+    }
+    const objects = Array.from(editor.querySelectorAll(EDITOR_DRAGGABLE_OBJECT_SELECTOR))
+      .filter((object) => rangeIntersectsNode(probeRange, object));
+    if (objects.length > 0) {
+      return direction === 'previous' ? objects.at(-1) : objects[0];
     }
 
     return null;
@@ -4572,10 +4612,7 @@ function App() {
     const activeObject = editorRef.current?.querySelector('.editorImageFrame.active, .editorVideoFrame.active, .editorAttachmentFrame.active');
     if (activeObject) {
       event.preventDefault();
-      activeObject.remove();
-      syncEditorContent();
-      cleanupUnusedAssets(customersRef.current);
-      editorRef.current?.focus();
+      removeEditorObjectAndPlaceCaret(activeObject);
       return;
     }
 
@@ -4621,20 +4658,7 @@ function App() {
     if (!adjacentObject) return;
 
     event.preventDefault();
-    const parent = adjacentObject.parentNode;
-    const nextOffset = parent ? Array.prototype.indexOf.call(parent.childNodes, adjacentObject) : 0;
-    adjacentObject.remove();
-    if (parent && editorRef.current?.contains(parent)) {
-      const nextRange = document.createRange();
-      nextRange.setStart(parent, Math.min(nextOffset, parent.childNodes.length));
-      nextRange.collapse(true);
-      selection?.removeAllRanges();
-      selection?.addRange(nextRange);
-      editorSelectionRef.current = nextRange.cloneRange();
-    }
-    syncEditorContent();
-    cleanupUnusedAssets(customersRef.current);
-    editorRef.current?.focus();
+    removeEditorObjectAndPlaceCaret(adjacentObject);
   }
 
   function deleteWorkflow(workflowId) {
