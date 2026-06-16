@@ -1,0 +1,959 @@
+.detailScroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.archiveScroll {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.archiveCard {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 0;
+  border-radius: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: transparent;
+  box-shadow: none;
+}
+
+.archiveHero {
+  min-height: 90px;
+  padding: 14px 12px;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  background: rgba(255, 255, 255, 0.78);
+  flex-shrink: 0;
+}
+
+.archiveHero .brandLogo.large {
+  width: 60px;
+  height: 60px;
+  border-radius: 10px;
+}
+
+.archiveHero .brandLogo.huawei.large {
+  font-size: 42px;
+}
+
+.archiveIdentity {
+  min-width: 0;
+  flex: 1 1 180px;
+}
+
+.archiveNameLine {
+  width: 100%;
+  gap: 4px;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.archiveNameLine input {
+  width: auto;
+  min-width: 0;
+  max-width: 210px;
+  flex: 0 0 auto;
+  height: 30px;
+  padding: 0;
+  color: #111111;
+  font-size: 21px;
+  line-height: 1;
+  font-weight: 850;
+}
+
+.archiveNameLine input:disabled,
+.archiveField input:disabled,
+.archiveField select:disabled {
+  cursor: default;
+  opacity: 1;
+  -webkit-text-fill-color: currentColor;
+}
+
+.archiveNameLine input:not(:disabled) {
+  padding: 0 6px;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+}
+
+.archiveNameLine .gradeBadge {
+  flex: 0 0 auto;
+}
+
+.archiveNameLine .compactGradeBadge {
+  height: 24px;
+  min-width: 38px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  font-size: 12px;
+  line-height: 24px;
+}
+
+.archiveNameLine .compactGradeBadge svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+  flex: 0 0 auto;
+}
+
+.archiveIdentity span {
+  display: block;
+  margin-top: 3px;
+  color: #555555;
+  font-size: 13px;
+}
+
+.archiveTitleActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+  gap: 7px;
+  flex-shrink: 0;
+}
+
+.archiveEditButton {
+  justify-content: center;
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  border-radius: 8px;
+  color: #222222;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  font-size: 13px;
+  font-weight: 780;
+  flex-shrink: 0;
+}
+
+.archiveEditButton {
+  height: 34px;
+  padding: 0 13px;
+}
+
+.archiveEditButton.savingMode {
+  color: white;
+  border-color: transparent;
+  background: linear-gradient(180deg, #202020, #000000);
+}
+
+.archiveCancelButton {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid rgba(183, 70, 70, 0.28);
+  border-radius: 8px;
+  color: #b74646;
+  background: rgba(255, 245, 245, 0.78);
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.archiveCancelButton:hover {
+  border-color: rgba(183, 70, 70, 0.5);
+  background: rgba(255, 235, 235, 0.92);
+}
+
+.archiveGlobalSaveButton {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid rgba(19, 112, 110, 0.26);
+  border-radius: 8px;
+  color: #13706e;
+  background: rgba(239, 252, 250, 0.78);
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.archiveDeleteWorkflowButton {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  border: 1px solid rgba(213, 88, 88, 0.34);
+  border-radius: 7px;
+  color: #b74646;
+  background: rgba(255, 245, 245, 0.82);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.archiveDeleteWorkflowButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.archiveInfoGrid {
+  margin: 0 12px 12px;
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr);
+  grid-auto-rows: minmax(42px, auto);
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.07);
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.archiveField {
+  display: contents;
+}
+
+.archiveField span {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border-right: 1px solid rgba(0, 0, 0, 0.07);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.07);
+  color: #13706e;
+  background: rgba(247, 250, 250, 0.74);
+  font-size: 12px;
+  font-weight: 830;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.archiveField .archiveFieldLabelText {
+  width: 100%;
+  min-width: 0;
+  padding: 2px 0;
+  border-bottom: 1px dashed rgba(19, 112, 110, 0.36);
+  color: #13706e;
+  outline: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.archiveField .archiveFieldLabelText:focus {
+  border-bottom-color: #13706e;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.archiveField input,
+.archiveField select,
+.archiveFieldValueLink {
+  height: 100%;
+  min-height: 42px;
+  padding: 0 10px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.07);
+  color: #333333;
+  background: rgba(255, 255, 255, 0.56);
+  font-size: 13px;
+}
+
+.archiveFieldValueLink {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  color: #0b6f9f;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.archiveFieldValueLink:hover {
+  color: #075985;
+  text-decoration: underline;
+}
+
+.archiveField.editingField input,
+.archiveField.editingField select {
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.archiveField.editingField input:focus,
+.archiveField.editingField select:focus {
+  background: #ffffff;
+  box-shadow: inset 0 0 0 2px rgba(19, 112, 110, 0.18);
+}
+
+.archiveWorkflowBlock {
+  flex: 1 1 0;
+  min-height: 160px;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 12px 12px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.archiveWorkflowHeader {
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.archiveWorkflowHeading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.archiveWorkflowActions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.workflowSortToggle {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #555555;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.workflowSortToggle:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.archiveWorkflowHeader h3 {
+  margin: 0;
+  color: #111111;
+  font-size: 14px;
+  font-weight: 850;
+}
+
+.workflowViewToggle {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #555555;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.workflowViewToggle:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.archiveTimeline {
+  flex: 1;
+  min-height: 0;
+  border: 1px solid rgba(0, 0, 0, 0.09);
+  border-radius: 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: rgba(255, 255, 255, 0.9);
+  overscroll-behavior: contain;
+}
+
+.archiveTimeline.emptyTimeline {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.archiveTimelineRow {
+  min-height: 44px;
+  display: grid;
+  grid-template-columns: 96px 30px minmax(0, 1fr) 30px 78px;
+  gap: 0;
+  align-items: stretch;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  cursor: pointer;
+}
+
+.archiveTimelineRow:last-child .timelineRail::after {
+  bottom: 0;
+}
+
+.archiveTimelineRow.selectedWorkflow {
+  background: rgba(239, 252, 250, 0.68);
+}
+
+.archiveTimelineDate {
+  display: flex;
+  align-items: center;
+  padding: 0 13px;
+  color: #45515d;
+  font-size: 12px;
+  white-space: nowrap;
+  border-right: 0;
+}
+
+.archiveTimelineRow .timelineRail {
+  position: relative;
+  display: grid;
+  place-items: center;
+  padding-top: 0;
+}
+
+.archiveTimelineRow .timelineRail::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: -1px;
+  width: 1px;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.13);
+}
+
+.archiveTimelineRow .statusDot {
+  position: relative;
+  z-index: 1;
+  width: 11px;
+  height: 11px;
+  display: block;
+  box-shadow: 0 0 0 3px rgba(236, 244, 247, 0.95);
+}
+
+.archiveTimelineContent {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 10px 0 8px;
+}
+
+.archiveTimelineContent input {
+  height: 28px;
+  padding: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #39414a;
+  font-size: 13px;
+}
+
+.archiveTimelineContent input[readonly] {
+  cursor: pointer;
+}
+
+.archiveTimelineContent input.editingTitle {
+  padding: 0 6px;
+  border: 1px solid rgba(0, 0, 0, 0.22);
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.archiveTimelineRow .workflowControls {
+  align-self: center;
+  justify-content: flex-end;
+  padding: 0 9px 0 0;
+}
+
+.workflowPick {
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.workflowPick input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.workflowPick span {
+  width: 15px;
+  height: 15px;
+  border: 1px solid rgba(0, 0, 0, 0.22);
+  border-radius: 50%;
+  background: #ffffff;
+}
+
+.workflowPick input[type="checkbox"] + span {
+  border-radius: 4px;
+}
+
+.workflowPick input:checked + span {
+  border-color: #0b8a8d;
+  box-shadow: inset 0 0 0 4px #ffffff;
+  background: #0b8a8d;
+}
+
+.archiveTimelineRow .statusSelect {
+  width: 62px;
+  min-width: 62px;
+  max-width: 62px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  border-radius: 8px;
+  text-align: center;
+  text-align-last: center;
+  font-size: 12px;
+  font-weight: 800;
+  appearance: none;
+  flex: 0 0 auto;
+}
+
+.archiveTimelineRow .statusSelect.status跟进中 {
+  color: #087678;
+  border-color: rgba(12, 139, 141, 0.44);
+  background: rgba(239, 252, 250, 0.95);
+}
+
+.archiveTimelineRow .statusSelect.status待确认 {
+  color: #b96a17;
+  border-color: rgba(232, 178, 109, 0.68);
+  background: rgba(255, 248, 240, 0.92);
+}
+
+.archiveTimelineRow .statusSelect.status已完成 {
+  color: #24784f;
+  border-color: rgba(133, 199, 164, 0.68);
+  background: rgba(242, 251, 245, 0.92);
+}
+
+.archiveTimelineRow .statusSelect.status暂停 {
+  color: #666666;
+  border-color: rgba(0, 0, 0, 0.16);
+  background: rgba(250, 250, 250, 0.94);
+}
+
+.profileCard,
+.detailSection {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.66);
+  box-shadow: var(--shadow-soft);
+}
+
+.profileCard {
+  padding: 12px;
+  background:
+    linear-gradient(135deg, rgba(246, 246, 246, 0.96), rgba(255, 255, 255, 0.78)),
+    rgba(255, 255, 255, 0.82);
+}
+
+.profileHeader {
+  min-height: 52px;
+  gap: 10px;
+}
+
+.profileIdentity {
+  min-width: 0;
+  flex: 1;
+}
+
+.profileHeader h2 {
+  margin: 0 0 5px;
+  font-size: 18px;
+  line-height: 1.08;
+  letter-spacing: 0;
+  font-weight: 830;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profileHeader span {
+  color: #555555;
+  font-size: 13px;
+}
+
+.profileMetaGrid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.profileMetaGrid div {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 9px;
+  background: rgba(248, 248, 248, 0.76);
+}
+
+.profileMetaGrid span,
+.detailInput span {
+  display: block;
+  color: #666666;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.profileMetaGrid strong {
+  display: block;
+  margin-top: 4px;
+  color: #111111;
+  font-size: 13px;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detailActionBar {
+  position: sticky;
+  bottom: 0;
+  margin: 4px -12px 0;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+  border-top: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.68);
+  backdrop-filter: blur(16px);
+}
+
+.detailActionBar button {
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-weight: 820;
+}
+
+.deleteButton {
+  color: #111111;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.deleteButton:hover {
+  border-color: rgba(0, 0, 0, 0.32);
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.detailSection {
+  padding: 11px;
+}
+
+.sectionTitle,
+.workflowHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 9px;
+}
+
+.sectionTitle h3,
+.workflowHeader h3 {
+  margin: 0;
+  color: #111111;
+  font-size: 14px;
+  font-weight: 820;
+}
+
+.detailFieldGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.compactFieldGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.detailInput {
+  min-width: 0;
+  min-height: 54px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 8px;
+  background: rgba(248, 248, 248, 0.76);
+}
+
+.detailInput:focus-within {
+  border-color: rgba(0, 0, 0, 0.38);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.06);
+}
+
+.detailInput input,
+.detailInput select {
+  height: 22px;
+  color: #222222;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.detailInput select {
+  appearance: auto;
+}
+
+.workflowTable {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.workflowRow {
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: stretch;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  cursor: pointer;
+}
+
+.workflowRow.selectedWorkflow {
+  border-color: rgba(40, 100, 240, 0.42);
+  background: linear-gradient(90deg, rgba(237, 244, 255, 0.88), rgba(255, 255, 255, 0.78));
+  box-shadow: inset 3px 0 0 #2864f0;
+}
+
+.workflowRow:focus-visible {
+  outline: 2px solid rgba(40, 100, 240, 0.34);
+  outline-offset: 2px;
+}
+
+.timelineRail {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  padding-top: 7px;
+}
+
+.timelineRail::after {
+  content: "";
+  position: absolute;
+  top: 21px;
+  bottom: 2px;
+  width: 1px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.timelineContent {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.timelineTopline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.workflowControls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.dateCell {
+  color: #333333;
+  font-size: 12px;
+  font-weight: 720;
+  line-height: 1;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.statusDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px rgba(237, 243, 248, 0.82);
+}
+
+.status跟进中 {
+  background: #0b8a8d;
+}
+
+.status待确认 {
+  background: #f0a442;
+}
+
+.status已完成 {
+  background: #2f9561;
+}
+
+.status暂停 {
+  background: #aaaaaa;
+}
+
+.workflowRow input {
+  height: 24px;
+  padding: 0;
+  color: #222222;
+  font-size: 13px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflowTitleInput {
+  color: #111111;
+  font-weight: 820;
+}
+
+.workflowContentInput {
+  color: #444444;
+}
+
+.workflowRow .statusSelect {
+  width: 78px;
+  min-width: 78px;
+  max-width: 78px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  border-radius: 8px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 800;
+  flex: 0 0 auto;
+}
+
+.workflowDeleteButton {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(213, 88, 88, 0.34);
+  border-radius: 7px;
+  color: #b74646;
+  background: rgba(255, 245, 245, 0.86);
+  flex: 0 0 auto;
+}
+
+.workflowDeleteButton:hover {
+  border-color: rgba(213, 88, 88, 0.56);
+  background: rgba(255, 235, 235, 0.95);
+}
+
+.workflowRow .statusSelect.status跟进中 {
+  color: #235cde;
+  border-color: rgba(90, 135, 235, 0.5);
+  background: rgba(237, 244, 255, 0.9);
+}
+
+.workflowRow .statusSelect.status待确认 {
+  color: #b96a17;
+  border-color: rgba(232, 178, 109, 0.65);
+  background: rgba(255, 248, 240, 0.9);
+}
+
+.workflowRow .statusSelect.status已完成 {
+  color: #24784f;
+  border-color: rgba(133, 199, 164, 0.65);
+  background: rgba(242, 251, 245, 0.9);
+}
+
+.workflowRow .statusSelect.status暂停 {
+  color: #666666;
+  border-color: rgba(0, 0, 0, 0.16);
+  background: rgba(250, 250, 250, 0.92);
+}
+
+.workflowEmpty {
+  min-height: 46px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed rgba(0, 0, 0, 0.22);
+  border-radius: 8px;
+  color: #666666;
+  font-size: 13px;
+  background: rgba(250, 250, 250, 0.62);
+}
+
+.emptyState {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  color: #666666;
+}
+
+.emptyStateWithAction {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 40px 24px;
+}
+
+.emptyStateIcon {
+  width: 88px;
+  height: 88px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #f2f3f5;
+  color: #b0b4bb;
+  margin-bottom: 20px;
+}
+
+.emptyStateTitle {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #333333;
+}
+
+.emptyStateHint {
+  margin: 6px 0 22px;
+  font-size: 13px;
+  color: #999999;
+}
+
+.emptyStateAddButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 42px;
+  min-width: 140px;
+  padding: 0 22px;
+  border: 0;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #ffffff;
+  background: linear-gradient(135deg, #0b8a8d, #0c7a80);
+  box-shadow: 0 2px 8px rgba(11, 138, 141, 0.3);
+  cursor: pointer;
+  transition: box-shadow 0.15s, transform 0.15s;
+}
+
+.emptyStateAddButton:hover {
+  box-shadow: 0 4px 16px rgba(11, 138, 141, 0.42);
+  transform: translateY(-1px);
+}
+
+.emptyStateAddButton:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 4px rgba(11, 138, 141, 0.24);
+}
+

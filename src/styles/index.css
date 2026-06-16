@@ -1,0 +1,13 @@
+/* Aggregated styles. Import order matters: variables first. */
+@import "./variables.css";
+@import "./workspace.css";
+@import "./topbar.css";
+@import "./board.css";
+@import "./collapsed.css";
+@import "./customerList.css";
+@import "./editor.css";
+@import "./composer.css";
+@import "./archive.css";
+@import "./dialogs.css";
+@import "./mention.css";
+@import "./contextMenu.css";

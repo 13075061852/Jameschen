@@ -1,0 +1,851 @@
+.conversationBody {
+  min-height: 0;
+  flex: 1;
+  padding: 12px 14px 12px;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+
+.editorShell {
+  position: relative;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  overflow: visible;
+  background: rgba(255, 255, 255, 0.7);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+.editorToolbar {
+  min-height: 32px;
+  height: auto;
+  gap: 6px;
+  padding: 3px 12px;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  border-bottom: 1px solid var(--line);
+  color: #333333;
+  background: rgba(255, 255, 255, 0.46);
+  overflow: visible;
+  scrollbar-width: none;
+  position: relative;
+  z-index: 5;
+}
+
+.editorToolbar::-webkit-scrollbar {
+  display: none;
+}
+
+.editorToolbar.isDisabled {
+  opacity: 0.45;
+}
+
+.editorToolbar.isDisabled > * {
+  pointer-events: none;
+}
+
+.editorToolbar span {
+  width: 1px;
+  height: 16px;
+  flex: 0 0 auto;
+  background: var(--line);
+}
+
+.toolbarIconButton {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  color: inherit;
+  background: transparent;
+}
+
+.toolbarIconButton:hover {
+  background: rgba(0, 0, 0, 0.07);
+}
+
+.toolbarIconButton.active {
+  color: #ffffff;
+  background: #2563eb;
+}
+
+.toolbarIconButton.active:hover {
+  color: #ffffff;
+  background: #1d4ed8;
+}
+
+.toolbarSizePicker {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.toolbarSizePicker::after {
+  content: "";
+  position: absolute;
+  left: -8px;
+  right: -8px;
+  top: 100%;
+  height: 12px;
+}
+
+.toolbarSizeTrigger {
+  height: 24px;
+  min-width: 58px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 7px;
+  color: #333333;
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  font-weight: 760;
+  outline: 0;
+}
+
+.toolbarSizeTrigger span {
+  min-width: 32px;
+  text-align: center;
+}
+
+.toolbarSizePopover {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 4px);
+  transform: translateX(-50%) translateY(-3px);
+  width: max-content;
+  min-width: 92px;
+  padding: 8px 10px;
+  display: grid;
+  gap: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, transform 120ms ease;
+  z-index: 20;
+}
+
+.toolbarSizePicker:hover .toolbarSizePopover,
+.toolbarSizePicker:focus-within .toolbarSizePopover {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+
+.toolbarSizeOption {
+  min-width: 72px;
+  min-height: 30px;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 6px;
+  color: #222222;
+  background: transparent;
+  font-weight: 760;
+  line-height: 1.15;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.toolbarSizeOption:hover {
+  background: rgba(0, 0, 0, 0.07);
+}
+
+.toolbarFontPicker {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.toolbarFontPicker::after {
+  content: "";
+  position: absolute;
+  left: -8px;
+  right: -8px;
+  top: 100%;
+  height: 12px;
+}
+
+.toolbarFontTrigger {
+  height: 24px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 7px;
+  color: #333333;
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  font-weight: 760;
+  outline: 0;
+  cursor: default;
+}
+
+.toolbarFontTrigger span {
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  background: none;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.toolbarFontTrigger svg {
+  flex-shrink: 0;
+}
+
+.toolbarFontPopover {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 4px);
+  transform: translateX(-50%) translateY(-3px);
+  width: max-content;
+  padding: 8px 10px;
+  display: grid;
+  gap: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, transform 120ms ease;
+  z-index: 20;
+}
+
+.toolbarFontPicker:hover .toolbarFontPopover,
+.toolbarFontPicker:focus-within .toolbarFontPopover {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+
+.toolbarFontOption {
+  min-height: 30px;
+  padding: 2px 10px;
+  border: 0;
+  border-radius: 6px;
+  color: #222222;
+  background: transparent;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.toolbarFontOption:hover {
+  background: rgba(0, 0, 0, 0.07);
+}
+
+.toolbarSwatch {
+  position: relative;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  border-radius: 5px;
+  background: var(--swatch-color);
+  flex: 0 0 auto;
+}
+
+.toolbarColorPicker {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.toolbarColorPicker::after {
+  content: "";
+  position: absolute;
+  left: -8px;
+  right: -8px;
+  top: 100%;
+  height: 12px;
+}
+
+.toolbarColorTrigger {
+  position: relative;
+  width: 38px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 7px;
+  color: #232323;
+  background: rgba(255, 255, 255, 0.78);
+  font-size: 12px;
+  font-weight: 900;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: background 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.toolbarColorTrigger:hover {
+  border-color: rgba(0, 0, 0, 0.28);
+  background: #ffffff;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.08);
+}
+
+.toolbarColorTrigger::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  bottom: 3px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--active-color);
+  pointer-events: none;
+}
+
+.toolbarColorTrigger.textSwatch {
+  color: #242424;
+}
+
+.toolbarColorTrigger.backgroundSwatch {
+  color: #242424;
+}
+
+.toolbarColorTrigger svg {
+  color: inherit;
+  flex: 0 0 auto;
+}
+
+.toolbarColorPopover {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 4px);
+  transform: translateX(-50%) translateY(-3px);
+  width: max-content;
+  max-width: 180px;
+  padding: 7px;
+  display: grid;
+  grid-template-columns: repeat(6, 17px);
+  gap: 5px;
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, transform 120ms ease;
+  z-index: 20;
+}
+
+.toolbarColorPicker:hover .toolbarColorPopover,
+.toolbarColorPicker:focus-within .toolbarColorPopover {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+
+.toolbarSwatch:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.16);
+}
+
+.toolbarSwatch.textSwatch::after {
+  content: "A";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--swatch-color);
+  font-size: 10px;
+  font-weight: 900;
+  text-shadow: 0 1px 0 #ffffff, 1px 0 0 #ffffff, 0 -1px 0 #ffffff, -1px 0 0 #ffffff;
+}
+
+.toolbarSwatch.backgroundSwatch::after {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.28);
+  border-radius: 2px;
+}
+
+.messyContent {
+  flex: 1;
+  min-height: 0;
+  border: 0;
+  outline: 0;
+  overflow: auto;
+  padding: 11px 13px 32px;
+  color: #222222;
+  line-height: 1.65;
+  font-size: 14px;
+  font-family: Calibri, "Open Sans", sans-serif;
+  background: transparent;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.messyContent:empty::before {
+  content: attr(data-placeholder);
+  color: #888888;
+  pointer-events: none;
+}
+
+.messyContent.mergedViewContent {
+  background: transparent;
+}
+
+.mergedWorkflowSection {
+  padding: 8px 10px 10px;
+}
+
+.mergedWorkflowSection + .mergedWorkflowSection {
+  margin-top: 14px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(11, 138, 141, 0.18);
+}
+
+.mergedWorkflowMeta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+  color: #5f6d78;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.mergedWorkflowMeta .statusTag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 58px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #ffffff;
+}
+
+.mergedWorkflowMeta .statusTag.status跟进中 {
+  color: #087678;
+  border: 1px solid rgba(12, 139, 141, 0.44);
+}
+
+.mergedWorkflowMeta .statusTag.status待确认 {
+  color: #b96a17;
+  border: 1px solid rgba(232, 178, 109, 0.68);
+}
+
+.mergedWorkflowMeta .statusTag.status已完成 {
+  color: #24784f;
+  border: 1px solid rgba(133, 199, 164, 0.68);
+}
+
+.mergedWorkflowMeta .statusTag.status暂停 {
+  color: #666666;
+  border: 1px solid rgba(0, 0, 0, 0.16);
+}
+
+.mergedWorkflowBody {
+  color: #2d3741;
+  min-height: 32px;
+  outline: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.mergedWorkflowBody p,
+.mergedWorkflowBody div {
+  margin: 0;
+}
+
+.mergedWorkflowBody > :first-child {
+  margin-top: 0 !important;
+}
+
+.mergedWorkflowBody > :last-child {
+  margin-bottom: 0 !important;
+}
+
+.mergedWorkflowBody > p:empty,
+.mergedWorkflowBody > div:empty {
+  display: block;
+  min-height: 1.65em;
+}
+
+.editorTimestampBlock {
+  width: fit-content;
+  max-width: 100%;
+  margin: 10px 0 6px;
+  padding: 3px 9px;
+  border: 1px solid rgba(12, 139, 141, 0.24);
+  border-radius: 999px;
+  color: #087678;
+  background: rgba(239, 252, 250, 0.82);
+  font-size: 12px;
+  font-weight: 760;
+  line-height: 1.45;
+  user-select: none;
+}
+
+.mergedWorkflowBody > .editorTimestampBlock {
+  margin-bottom: 2px;
+}
+
+.mergedWorkflowBody > .editorTimestampCursorLine {
+  min-height: 0;
+  height: 1.65em;
+  line-height: 1.65;
+}
+
+.mergedViewContent .mergedFirstTimestampHidden {
+  display: none !important;
+}
+
+.messyContent a {
+  color: #2563eb;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.messyContent a:hover {
+  color: #1d4ed8;
+}
+
+.messyContent a.autoLink {
+  text-decoration: none;
+  border-bottom: 1px dashed rgba(37, 99, 235, 0.35);
+}
+
+.messyContent a.autoLink:hover {
+  border-bottom-color: #2563eb;
+}
+
+.messyContent ol,
+.messyContent ul {
+  margin: 0.35em 0;
+  padding-left: 1.6em;
+}
+
+.messyContent li + li {
+  margin-top: 0.18em;
+}
+
+.messyContent span {
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.messyContent .editorItalic,
+.messyContent i,
+.messyContent em {
+  display: inline-block;
+  font-style: italic;
+  transform: skewX(-10deg);
+}
+
+.messyContent img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+.messyContent .editorImageFrame {
+  position: relative;
+  width: 320px;
+  max-width: 100%;
+  display: inline-block;
+  margin: 8px 8px 8px 0;
+  vertical-align: top;
+  line-height: 0;
+  user-select: none;
+  -webkit-user-drag: none;
+  cursor: grab;
+  transition: box-shadow 140ms ease, outline-color 140ms ease, opacity 140ms ease;
+}
+
+.messyContent .editorCaretAnchor {
+  display: none;
+}
+
+.messyContent .editorMediaCursorLine {
+  display: none;
+}
+
+.messyContent .editorImageFrame img {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  display: block;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.messyContent .editorImageFrame img:not([src]),
+.messyContent .editorImageFrame img[data-loading-asset="true"] {
+  visibility: hidden;
+}
+
+.messyContent .editorImageFrame.active {
+  outline: 2px solid #2563eb;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.16);
+}
+
+.messyContent .editorImageFrame.rangeSelected {
+  outline: 2px solid #6366f1;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.18);
+}
+
+.messyContent .editorImageFrame.rangeSelected::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  background: rgba(99, 102, 241, 0.16);
+  pointer-events: none;
+}
+
+.messyContent .editorVideoFrame {
+  position: relative;
+  width: min(520px, 100%);
+  margin: 6px 0;
+  display: block;
+  line-height: 1.2;
+  user-select: none;
+  cursor: grab;
+  transition: box-shadow 140ms ease, outline-color 140ms ease;
+}
+
+.messyContent .editorVideoFrame video {
+  width: 100%;
+  max-width: 100%;
+  display: block;
+  border-radius: 8px;
+  background: #111111;
+}
+
+.messyContent .editorVideoFrame.active {
+  outline: 2px solid #2563eb;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.16);
+}
+
+.messyContent .editorVideoFrame.rangeSelected {
+  outline: 2px solid #6366f1;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.18);
+}
+
+.messyContent .editorVideoFrame.rangeSelected::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  background: rgba(99, 102, 241, 0.14);
+  pointer-events: none;
+}
+
+.editorVideoCaption {
+  display: block;
+  margin-top: 6px;
+  overflow: hidden;
+  color: #666666;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messyContent .editorImageFrame.dragging,
+.messyContent .editorVideoFrame.dragging,
+.messyContent .editorAttachmentFrame.dragging {
+  cursor: grabbing;
+  opacity: 0.72;
+  transition: none;
+}
+
+.dragGhost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  margin: 0;
+  display: inline-block;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0.92;
+  z-index: 999;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.18);
+  will-change: transform;
+  transform: translate3d(0, 0, 0);
+  backface-visibility: hidden;
+}
+
+.dragGhost img {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 6px;
+}
+
+.dragGhost .editorImageResizeHandle {
+  display: none;
+}
+
+.editorImageDropMarker {
+  width: 320px;
+  max-width: 100%;
+  min-height: 28px;
+  display: inline-block;
+  vertical-align: top;
+  pointer-events: none;
+  border: 2px dashed rgba(17, 17, 17, 0.35);
+  border-radius: 8px;
+  background: rgba(17, 17, 17, 0.05);
+}
+
+.messyContent .editorImageResizeHandle {
+  position: absolute;
+  right: -7px;
+  bottom: -7px;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  background: #111111;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+  cursor: nwse-resize;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.messyContent .editorImageFrame.active .editorImageResizeHandle {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.messyContent .editorAttachmentFrame {
+  position: relative;
+  width: min(300px, 100%);
+  max-width: 100%;
+  min-height: 46px;
+  box-sizing: border-box;
+  margin: 8px 8px 8px 0;
+  padding: 8px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  vertical-align: top;
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  border-radius: 8px;
+  color: #222222;
+  background: rgba(255, 255, 255, 0.92);
+  user-select: none;
+  cursor: grab;
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease, outline-color 140ms ease;
+}
+
+.messyContent .editorAttachmentFrame.active {
+  border-color: rgba(37, 99, 235, 0.55);
+  outline: 2px solid #2563eb;
+  outline-offset: 3px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: none;
+}
+
+.messyContent .editorAttachmentFrame.rangeSelected {
+  border-color: rgba(99, 102, 241, 0.58);
+  outline: 2px solid #6366f1;
+  outline-offset: 3px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: none;
+}
+
+.messyContent span:has(.editorAttachmentFrame) {
+  background: transparent !important;
+}
+
+.editorAttachmentIcon {
+  position: relative;
+  min-width: 38px;
+  height: 34px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px 3px 6px 6px;
+  color: #ffffff;
+  background: #4b5563;
+  font-size: 10px;
+  font-weight: 850;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}
+
+.editorAttachmentIcon::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 9px;
+  height: 9px;
+  border-radius: 0 3px 0 3px;
+  background: rgba(255, 255, 255, 0.42);
+  clip-path: polygon(0 0, 100% 0, 100% 100%);
+}
+
+.attachmentPdf .editorAttachmentIcon {
+  background: #dc2626;
+}
+
+.attachmentWord .editorAttachmentIcon {
+  background: #2563eb;
+}
+
+.attachmentExcel .editorAttachmentIcon {
+  background: #16a34a;
+}
+
+.attachmentVideo .editorAttachmentIcon {
+  background: #7c3aed;
+}
+
+.editorAttachmentText {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 2px;
+  line-height: 1.2;
+}
+
+.editorAttachmentText strong {
+  overflow: hidden;
+  color: #111111;
+  font-size: 13px;
+  font-weight: 780;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editorAttachmentText small {
+  color: #666666;
+  font-size: 11px;
+}
+
+.wordCount {
+  position: absolute;
+  right: 12px;
+  bottom: 9px;
+  color: #666666;
+  font-size: 12px;
+}
+

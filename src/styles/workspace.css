@@ -1,0 +1,14 @@
+.workspace {
+  position: relative;
+  height: 100dvh;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #f3f3f3;
+}
+
+.workspace::before {
+  content: none;
+}
+
