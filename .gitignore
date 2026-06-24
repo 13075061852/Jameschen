@@ -4,6 +4,7 @@ node_modules/
 # Build output
 dist/
 build/
+output/
 
 # Local env files
 .env
@@ -20,6 +21,7 @@ pnpm-debug.log*
 # Editor and OS files
 .DS_Store
 Thumbs.db
+nul
 .idea/
 .vscode/
 
