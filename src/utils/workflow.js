@@ -102,14 +102,18 @@ export function markWorkflowContentEdited(entry, nextContent, now = new Date()) 
  * based on `lastEditedAt`. This prevents IndexedDB (async, may be stale) from
  * overwriting localStorage data (sync, always latest) on page load.
  */
-export function mergeCustomersWithLatestData(currentCustomers, storedCustomers) {
+export function mergeCustomersWithLatestData(currentCustomers, storedCustomers, options = {}) {
+  const {
+    includeStoredOnlyCustomers = true,
+    includeStoredOnlyTimelineEntries = includeStoredOnlyCustomers,
+  } = options;
   const storedById = new Map();
   for (let i = 0; i < storedCustomers.length; i += 1) {
     const customer = storedCustomers[i];
     if (customer?.id) storedById.set(customer.id, customer);
   }
 
-  return currentCustomers.map((currentCustomer) => {
+  const mergedCustomers = currentCustomers.map((currentCustomer) => {
     const storedCustomer = storedById.get(currentCustomer.id);
     if (!storedCustomer) return currentCustomer;
 
@@ -132,13 +136,30 @@ export function mergeCustomersWithLatestData(currentCustomers, storedCustomers) 
     for (let i = 0; i < currentTimeline.length; i += 1) {
       if (currentTimeline[i]?.id) currentEntryIds.add(currentTimeline[i].id);
     }
-    for (let i = 0; i < storedTimeline.length; i += 1) {
-      const entry = storedTimeline[i];
-      if (entry?.id && !currentEntryIds.has(entry.id)) {
-        mergedTimeline.push(entry);
+    if (includeStoredOnlyTimelineEntries) {
+      for (let i = 0; i < storedTimeline.length; i += 1) {
+        const entry = storedTimeline[i];
+        if (entry?.id && !currentEntryIds.has(entry.id)) {
+          mergedTimeline.push(entry);
+        }
       }
     }
 
     return { ...currentCustomer, timeline: mergedTimeline };
   });
+
+  if (includeStoredOnlyCustomers) {
+    const currentCustomerIds = new Set();
+    for (let i = 0; i < currentCustomers.length; i += 1) {
+      if (currentCustomers[i]?.id) currentCustomerIds.add(currentCustomers[i].id);
+    }
+    for (let i = 0; i < storedCustomers.length; i += 1) {
+      const storedCustomer = storedCustomers[i];
+      if (storedCustomer?.id && !currentCustomerIds.has(storedCustomer.id)) {
+        mergedCustomers.push(storedCustomer);
+      }
+    }
+  }
+
+  return mergedCustomers;
 }

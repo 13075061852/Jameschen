@@ -60,6 +60,14 @@ export function makeBlankCustomer(id, company) {
   };
 }
 
+function hasLocalStorageCustomerSnapshot() {
+  try {
+    return localStorage.getItem(STORAGE_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * @param {Object} options
  * @param {() => Object} options.getEditorContentFlush - callback that flushes
@@ -92,11 +100,25 @@ export default function useCustomerStore({ getEditorContentFlush, viewStateCallb
   // ─── IndexedDB hydration effect ──────────────────────────────────────────
   useEffect(() => {
     let canceled = false;
+    const hasLocalStorageSnapshot = hasLocalStorageCustomerSnapshot();
 
     readCustomersFromIndexedDb()
       .then((storedCustomers) => {
         if (canceled || !storedCustomers) return;
         if (userModifiedSinceLoad.current) {
+          if (!hasLocalStorageSnapshot) {
+            const mergedCustomers = mergeCustomersWithLatestData(
+              customersRef.current,
+              stripTransientObjectUrlsFromCustomers(storedCustomers),
+              { includeStoredOnlyCustomers: true, includeStoredOnlyTimelineEntries: true }
+            );
+            setCustomers(mergedCustomers);
+            customersRef.current = mergedCustomers;
+            saveCustomers(mergedCustomers);
+            viewStateCallbacks?.onHydrated?.(mergedCustomers);
+            setCustomerStoreHydrated(true);
+            return;
+          }
           console.warn('Skipped IndexedDB overwrite because user has already modified data');
           return;
         }
@@ -105,13 +127,16 @@ export default function useCustomerStore({ getEditorContentFlush, viewStateCallb
         const selectedId = viewStateCallbacks?.getSelectedId?.() ?? '';
         const selectedExistsInCurrent = currentCustomers.some((c) => c.id === selectedId);
         const selectedExistsInStored = normalizedStoredCustomers.some((c) => c.id === selectedId);
-        if (selectedId && selectedExistsInCurrent && !selectedExistsInStored) {
-          saveCustomers(currentCustomers);
-          return;
-        }
-        const mergedCustomers = mergeCustomersWithLatestData(currentCustomers, normalizedStoredCustomers);
+        const shouldRecoverIndexedDbOnlyData = !hasLocalStorageSnapshot;
+        const mergedCustomers = mergeCustomersWithLatestData(currentCustomers, normalizedStoredCustomers, {
+          includeStoredOnlyCustomers: shouldRecoverIndexedDbOnlyData,
+          includeStoredOnlyTimelineEntries: shouldRecoverIndexedDbOnlyData,
+        });
         setCustomers(mergedCustomers);
         customersRef.current = mergedCustomers;
+        if (shouldRecoverIndexedDbOnlyData || (selectedId && selectedExistsInCurrent && !selectedExistsInStored)) {
+          saveCustomers(mergedCustomers);
+        }
         viewStateCallbacks?.onHydrated?.(mergedCustomers);
         setCustomerStoreHydrated(true);
       })
