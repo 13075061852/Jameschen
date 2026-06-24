@@ -559,13 +559,15 @@
 }
 
 .messyContent .editorImageFrame {
-  position: relative;
+  position: relative !important;
   width: 320px;
   max-width: 100%;
-  display: inline-block;
-  margin: 8px 8px 8px 0;
-  vertical-align: top;
+  display: block !important;
+  float: none !important;
+  clear: both !important;
+  margin: 10px 0 18px;
   line-height: 0;
+  isolation: isolate;
   user-select: none;
   -webkit-user-drag: none;
   cursor: grab;
@@ -577,7 +579,9 @@
 }
 
 .messyContent .editorMediaCursorLine {
-  display: none;
+  display: block;
+  min-height: 1.65em;
+  line-height: 1.65;
 }
 
 .messyContent .editorImageFrame img {
@@ -674,40 +678,12 @@
   transition: none;
 }
 
-.dragGhost {
-  position: fixed;
-  top: 0;
-  left: 0;
-  margin: 0;
-  display: inline-block;
-  overflow: hidden;
-  pointer-events: none;
-  opacity: 0.92;
-  z-index: 999;
-  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.18);
-  will-change: transform;
-  transform: translate3d(0, 0, 0);
-  backface-visibility: hidden;
-}
-
-.dragGhost img {
-  width: 100%;
-  max-width: 100%;
-  height: auto;
-  display: block;
-  border-radius: 6px;
-}
-
-.dragGhost .editorImageResizeHandle {
-  display: none;
-}
-
 .editorImageDropMarker {
   width: 320px;
   max-width: 100%;
   min-height: 28px;
-  display: inline-block;
-  vertical-align: top;
+  display: block;
+  clear: both;
   pointer-events: none;
   border: 2px dashed rgba(17, 17, 17, 0.35);
   border-radius: 8px;

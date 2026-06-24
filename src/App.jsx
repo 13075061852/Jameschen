@@ -174,7 +174,6 @@ function App() {
   const attachmentInputRef = useRef(null);
   const backupInputRef = useRef(null);
   const imageDragStateRef = useRef(null);
-  const imageDragGhostRef = useRef(null);
   const imageDropMarkerRef = useRef(null);
   const imageDragRafRef = useRef(null);
   const imageDragLastEventRef = useRef(null);
@@ -372,7 +371,6 @@ function App() {
     editorObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
     editorObjectUrlsRef.current.clear();
     removeCustomImageDragListeners();
-    removeImageDragGhost();
     removeImageDropMarker();
     imageDragStateRef.current = null;
     imageDragLastEventRef.current = null;
@@ -1053,11 +1051,58 @@ function App() {
     setContextMenu(null);
   }
 
+  function normalizeMentionDistributedHtml(html = '') {
+    if (!html || typeof document === 'undefined') return html;
+    const container = document.createElement('div');
+    container.innerHTML = toEditorHtml(html);
+
+    container.querySelectorAll('script, style, link, meta').forEach((element) => element.remove());
+    container.querySelectorAll('.mergedWorkflowMeta, .workflowTimestamps').forEach((element) => element.remove());
+    clearTransientEditorSelectionClasses(container);
+
+    const unwrapElement = (element) => {
+      const fragment = document.createDocumentFragment();
+      while (element.firstChild) {
+        fragment.appendChild(element.firstChild);
+      }
+      element.replaceWith(fragment);
+    };
+
+    let didUnwrap = true;
+    while (didUnwrap) {
+      didUnwrap = false;
+      Array.from(container.querySelectorAll('.mergedWorkflowSection, .singleWorkflowSection')).forEach((section) => {
+        const body = section.querySelector(':scope > .mergedWorkflowBody') || section.querySelector('.mergedWorkflowBody');
+        if (body) {
+          unwrapElement(body);
+        }
+        unwrapElement(section);
+        didUnwrap = true;
+      });
+      Array.from(container.querySelectorAll('.mergedWorkflowBody')).forEach((body) => {
+        unwrapElement(body);
+        didUnwrap = true;
+      });
+    }
+
+    container.querySelectorAll('[contenteditable]').forEach((element) => {
+      if (element.matches('.editorTimestampBlock, .editorImageFrame, .editorVideoFrame, .editorAttachmentFrame')) {
+        element.setAttribute('contenteditable', 'false');
+        return;
+      }
+      element.removeAttribute('contenteditable');
+    });
+
+    normalizeEditorMediaFramePlacement(container);
+    normalizeEditorTimestampProtection(container);
+    return trimWorkflowHtmlEdges(container.innerHTML);
+  }
+
   function confirmMentionDistribute() {
     if (mentionSelectedIds.length === 0) return;
 
     const title = mentionWorkflowTitle.trim() || '沟通记录';
-    const contentHtml = mentionSourceHtml;
+    const contentHtml = normalizeMentionDistributedHtml(mentionSourceHtml);
     const contentText = getPlainTextFromHtml(contentHtml).trim();
     const today = new Date().toISOString().slice(0, 10);
     const now = new Date();
@@ -1143,13 +1188,19 @@ function App() {
 
   function appendMentionContentToMergedEditorTargets(workflowIds, timestampHtml, contentHtml) {
     if (!editorRef.current || !Array.isArray(workflowIds) || workflowIds.length === 0) return;
+    const normalizedContentHtml = normalizeMentionDistributedHtml(contentHtml);
     workflowIds.forEach((workflowId) => {
       const section = Array.from(editorRef.current.querySelectorAll('.mergedWorkflowSection'))
         .find((item) => item.getAttribute('data-workflow-id') === workflowId);
       const body = section?.querySelector('.mergedWorkflowBody');
       if (!body) return;
-      body.insertAdjacentHTML('beforeend', `${timestampHtml}${contentHtml}`);
+      body.insertAdjacentHTML('beforeend', `${timestampHtml}${normalizedContentHtml}`);
     });
+    prepareEditorImages();
+    prepareEditorVideos();
+    prepareEditorAttachments();
+    normalizeEditorMediaFramePlacement();
+    normalizeEditorTimestampProtection();
     prepareMergedWorkflowTimestampVisibility();
     const nextHtml = getEditorHtmlForSave();
     editorHistoryRef.current.lastHtml = nextHtml;
@@ -1946,6 +1997,45 @@ function App() {
 
     container.querySelectorAll('.editorCaretAnchor').forEach((element) => element.remove());
 
+    container.querySelectorAll('.editorImageFrame, .editorVideoFrame, .editorAttachmentFrame').forEach((frame) => {
+      let parent = frame.parentElement;
+      while (
+        parent
+        && parent !== container
+        && parent.matches('span,font,b,strong,i,em,u,a')
+        && !parent.matches('.editorImageFrame, .editorVideoFrame, .editorAttachmentFrame')
+      ) {
+        const wrapper = parent;
+        const grandParent = wrapper.parentNode;
+        if (!grandParent) break;
+
+        const beforeWrapper = wrapper.cloneNode(false);
+        while (wrapper.firstChild && wrapper.firstChild !== frame) {
+          beforeWrapper.appendChild(wrapper.firstChild);
+        }
+
+        const afterWrapper = wrapper.cloneNode(false);
+        while (frame.nextSibling) {
+          afterWrapper.appendChild(frame.nextSibling);
+        }
+
+        if (beforeWrapper.childNodes.length > 0) {
+          grandParent.insertBefore(beforeWrapper, wrapper);
+        }
+        grandParent.insertBefore(frame, wrapper);
+        if (afterWrapper.childNodes.length > 0) {
+          grandParent.insertBefore(afterWrapper, wrapper);
+        }
+        wrapper.remove();
+        parent = frame.parentElement;
+      }
+
+      const timestamp = frame.closest('.editorTimestampBlock');
+      if (timestamp?.parentNode) {
+        timestamp.parentNode.insertBefore(frame, timestamp.nextSibling);
+      }
+    });
+
     container.querySelectorAll('.editorMediaCursorLine').forEach((line) => {
       const parent = line.parentNode;
       if (!parent) return;
@@ -1955,7 +2045,7 @@ function App() {
         }
       });
       if (isEmptyEditorCursorLine(line)) {
-        line.remove();
+        line.textContent = '\u200b';
       } else {
         line.classList.remove('editorMediaCursorLine');
       }
@@ -1972,6 +2062,9 @@ function App() {
     scopes.forEach((scope) => {
       const timestamps = Array.from(scope.querySelectorAll('.editorTimestampBlock'));
       timestamps.forEach((timestamp, index) => {
+        timestamp.querySelectorAll('.editorImageFrame, .editorVideoFrame, .editorAttachmentFrame').forEach((frame) => {
+          timestamp.parentNode?.insertBefore(frame, timestamp.nextSibling);
+        });
         timestamp.contentEditable = 'false';
         if (index === 0) {
           timestamp.dataset.undeletable = 'true';
@@ -2214,11 +2307,9 @@ function App() {
     container.querySelectorAll('.editorImageResizeHandle').forEach((element) => element.remove());
     clearTransientEditorSelectionClasses(container);
     container.querySelectorAll('.editorImageFrame').forEach((frame) => {
-      if (frame.style.display === 'block' && frame.style.marginLeft !== 'auto') {
-        frame.style.display = 'inline-block';
-        frame.style.marginLeft = '0';
-        frame.style.marginRight = '0';
-      }
+      frame.style.display = 'block';
+      if (frame.style.marginLeft !== 'auto') frame.style.marginLeft = '0';
+      if (frame.style.marginRight !== 'auto') frame.style.marginRight = '0';
     });
     container.querySelectorAll('[contenteditable]').forEach((element) => {
       if (element.matches('.editorImageFrame, .editorVideoFrame, .editorAttachmentFrame')) {
@@ -2372,9 +2463,29 @@ function App() {
     const editor = editorRef.current;
     if (!range || !editor) return null;
 
+    const selectedTimestamp = Array.from(editor.querySelectorAll('.editorTimestampBlock'))
+      .find((timestamp) => {
+        if (range.intersectsNode?.(timestamp)) return true;
+        return range.commonAncestorContainer === timestamp || timestamp.contains(range.commonAncestorContainer);
+      });
+    if (selectedTimestamp) {
+      const mediaRange = document.createRange();
+      mediaRange.setStartAfter(selectedTimestamp);
+      mediaRange.collapse(true);
+      return mediaRange;
+    }
+
     const startElement = range.startContainer.nodeType === Node.ELEMENT_NODE
       ? range.startContainer
       : range.startContainer.parentElement;
+    const timestampBlock = startElement?.closest?.('.editorTimestampBlock');
+    if (timestampBlock && editor.contains(timestampBlock)) {
+      const mediaRange = document.createRange();
+      mediaRange.setStartAfter(timestampBlock);
+      mediaRange.collapse(true);
+      return mediaRange;
+    }
+
     const cursorLine = startElement?.closest?.('.editorMediaCursorLine, .editorTimestampCursorLine');
     if (cursorLine && editor.contains(cursorLine)) {
       const mediaRange = document.createRange();
@@ -2755,11 +2866,10 @@ function App() {
     frame.contentEditable = 'false';
     frame.draggable = false;
     frame.setAttribute('draggable', 'false');
-    if (frame.style.marginLeft === 'auto' || frame.style.marginRight === 'auto') {
-      frame.style.display = 'block';
-    } else {
-      frame.style.display = 'inline-block';
-    }
+    frame.style.display = 'block';
+    frame.style.position = 'relative';
+    frame.style.float = 'none';
+    frame.style.clear = 'both';
     if (!frame.style.marginLeft && !frame.style.marginRight) {
       frame.style.marginLeft = '0';
       frame.style.marginRight = '0';
@@ -3486,13 +3596,15 @@ function App() {
 
     const fragment = document.createDocumentFragment();
     fragment.appendChild(frame);
-    const cursorText = document.createTextNode('\u200b');
-    fragment.appendChild(cursorText);
+    const cursorLine = document.createElement('div');
+    cursorLine.className = 'editorMediaCursorLine';
+    cursorLine.appendChild(document.createTextNode('\u200b'));
+    fragment.appendChild(cursorLine);
 
     range.deleteContents();
     range.insertNode(fragment);
     clearAttachmentBackground(frame);
-    range.setStart(cursorText, cursorText.length);
+    range.setStart(cursorLine, cursorLine.childNodes.length);
     range.collapse(true);
     selection?.removeAllRanges();
     selection?.addRange(range);
@@ -3721,7 +3833,7 @@ function App() {
     const frame = getActiveEditorImageFrame();
     if (!frame) return;
 
-    frame.style.display = alignment === 'left' ? 'inline-block' : 'block';
+    frame.style.display = 'block';
     frame.style.marginLeft = alignment === 'right' || alignment === 'center' ? 'auto' : '0';
     frame.style.marginRight = alignment === 'center' ? 'auto' : '0';
     syncEditorContent();
@@ -3787,12 +3899,14 @@ function App() {
 
     const fragment = document.createDocumentFragment();
     fragment.appendChild(frame);
-    const cursorText = document.createTextNode('\u200b');
-    fragment.appendChild(cursorText);
+    const cursorLine = document.createElement('div');
+    cursorLine.className = 'editorMediaCursorLine';
+    cursorLine.appendChild(document.createTextNode('\u200b'));
+    fragment.appendChild(cursorLine);
 
     range.deleteContents();
     range.insertNode(fragment);
-    range.setStart(cursorText, cursorText.length);
+    range.setStart(cursorLine, cursorLine.childNodes.length);
     range.collapse(true);
     selection?.removeAllRanges();
     selection?.addRange(range);
@@ -3903,11 +4017,6 @@ function App() {
     imageDropMarkerRef.current = null;
   }
 
-  function removeImageDragGhost() {
-    imageDragGhostRef.current?.remove();
-    imageDragGhostRef.current = null;
-  }
-
   function removeCustomImageDragListeners() {
     cancelAnimationFrame(imageDragRafRef.current);
     imageDragRafRef.current = null;
@@ -3918,23 +4027,13 @@ function App() {
     document.removeEventListener('visibilitychange', stopCustomImageDrag);
   }
 
-  function updateImageDragGhost(clientX, clientY) {
-    const dragState = imageDragStateRef.current;
-    const ghost = imageDragGhostRef.current;
-    if (!dragState || !ghost) return;
-
-    const left = clientX - dragState.pointerOffsetX;
-    const top = clientY - dragState.pointerOffsetY;
-    ghost.style.transform = `translate3d(${Math.round(left)}px, ${Math.round(top)}px, 0)`;
-  }
-
   function ensureImageDropMarker(frame) {
     if (imageDropMarkerRef.current) return imageDropMarkerRef.current;
     const marker = document.createElement('span');
     marker.className = 'editorImageDropMarker';
     marker.style.width = frame.style.width || `${Math.round(frame.getBoundingClientRect().width)}px`;
     marker.style.height = `${Math.round(frame.getBoundingClientRect().height)}px`;
-    marker.style.display = frame.style.display || 'inline-block';
+    marker.style.display = 'block';
     marker.style.marginLeft = frame.style.marginLeft;
     marker.style.marginRight = frame.style.marginRight;
     imageDropMarkerRef.current = marker;
@@ -4035,7 +4134,6 @@ function App() {
     }
 
     imageDragStateRef.current = null;
-    removeImageDragGhost();
     removeImageDropMarker();
     event?.preventDefault?.();
   }
@@ -4066,7 +4164,6 @@ function App() {
         dragState.frame.parentNode?.replaceChild(marker, dragState.frame);
         dragState.placeholderInserted = true;
       }
-      updateImageDragGhost(latestEvent.clientX, latestEvent.clientY);
       placeImageDropMarker(dragState.frame, latestEvent.clientX, latestEvent.clientY);
     });
   }
@@ -4074,15 +4171,6 @@ function App() {
   function beginCustomImageDrag(frame, startEvent) {
     startEvent.preventDefault();
     const frameRect = frame.getBoundingClientRect();
-    const ghost = frame.cloneNode(true);
-    ghost.classList.remove('active');
-    ghost.classList.add('dragGhost');
-    ghost.style.width = `${Math.round(frameRect.width)}px`;
-    ghost.style.height = `${Math.round(frameRect.height)}px`;
-    ghost.style.marginLeft = '0';
-    ghost.style.marginRight = '0';
-    document.body.appendChild(ghost);
-    imageDragGhostRef.current = ghost;
 
     imageDragStateRef.current = {
       frame,
@@ -4097,7 +4185,6 @@ function App() {
     };
     document.body.style.cursor = 'grabbing';
     document.body.style.userSelect = 'none';
-    updateImageDragGhost(startEvent.clientX, startEvent.clientY);
     document.addEventListener('mousemove', handleCustomImageDragMove, true);
     document.addEventListener('mouseup', stopCustomImageDrag, true);
     window.addEventListener('blur', stopCustomImageDrag);
