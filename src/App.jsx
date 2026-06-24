@@ -148,6 +148,11 @@ function App() {
   const [leftPanelWidth, setLeftPanelWidth] = useState(initialLayout.leftPanelWidth);
   const [rightPanelWidth, setRightPanelWidth] = useState(initialLayout.rightPanelWidth);
   const [activeResizer, setActiveResizer] = useState('');
+  const leftCollapsedRef = useRef(leftCollapsed);
+  const rightCollapsedRef = useRef(rightCollapsed);
+  const leftPanelWidthRef = useRef(leftPanelWidth);
+  const rightPanelWidthRef = useRef(rightPanelWidth);
+  const editorExpandedPanelStateRef = useRef(null);
   const [pendingDelete, setPendingDelete] = useState(null);
   const [pendingImport, setPendingImport] = useState(null);
   const [attachmentPreview, setAttachmentPreview] = useState(null);
@@ -177,8 +182,11 @@ function App() {
   const imageDropMarkerRef = useRef(null);
   const imageDragRafRef = useRef(null);
   const imageDragLastEventRef = useRef(null);
+  const pendingEditorHydrationAfterImageDragRef = useRef(false);
   const editorSyncTimerRef = useRef(null);
   const editorDirtyRef = useRef(false);
+  const isSwitchingEditorContextRef = useRef(false);
+  const editorContextSwitchTimerRef = useRef(null);
   const skipNextEditorSelectionSaveRef = useRef(false);
   const editorHistoryRef = useRef({
     undoStack: [],
@@ -342,6 +350,10 @@ function App() {
 
   useEffect(() => {
     if (mainView !== 'workspace' || !editorRef.current || isMergedWorkflowView) return;
+    if (imageDragStateRef.current) {
+      pendingEditorHydrationAfterImageDragRef.current = true;
+      return;
+    }
     editorRef.current.innerHTML = toEditorHtml(stripStoredAssetSrcBeforeDomInsert(editorContent));
     normalizeEditorTimestampProtection();
     prepareEditorImages();
@@ -354,6 +366,10 @@ function App() {
 
   useEffect(() => {
     if (mainView !== 'workspace' || !editorRef.current || !isMergedWorkflowView) return;
+    if (imageDragStateRef.current) {
+      pendingEditorHydrationAfterImageDragRef.current = true;
+      return;
+    }
     editorRef.current.innerHTML = toEditorHtml(stripStoredAssetSrcBeforeDomInsert(editorContent));
     normalizeEditorTimestampProtection();
     prepareMergedWorkflowTimestampVisibility();
@@ -363,11 +379,32 @@ function App() {
     normalizeEditorMediaFramePlacement();
     editorSelectionRef.current = null;
     resetEditorHistory();
-  }, [mainView, editorKey, isMergedWorkflowView, mergedWorkflowMetaKey, editorHydrationVersion]);
+  }, [mainView, editorKey, isMergedWorkflowView, editorHydrationVersion]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (mainView !== 'workspace' || !editor || !isMergedWorkflowView) return;
+
+    mergedWorkflows.forEach((item) => {
+      const section = Array.from(editor.querySelectorAll('.mergedWorkflowSection'))
+        .find((element) => element.dataset.workflowId === item.id);
+      const meta = section?.querySelector('.mergedWorkflowMeta');
+      if (!meta) return;
+
+      const metaItems = meta.querySelectorAll('span');
+      if (metaItems[0]) metaItems[0].textContent = item.date ?? '';
+      if (metaItems[1]) metaItems[1].textContent = item.title ?? item.content ?? '沟通记录';
+      if (metaItems[2]) {
+        metaItems[2].textContent = item.status ?? '';
+        metaItems[2].className = `statusTag status${item.status}`;
+      }
+    });
+  }, [mainView, isMergedWorkflowView, mergedWorkflowMetaKey]);
 
   useEffect(() => () => {
     cancelAnimationFrame(imageDragRafRef.current);
     clearTimeout(editorSyncTimerRef.current);
+    clearTimeout(editorContextSwitchTimerRef.current);
     editorObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
     editorObjectUrlsRef.current.clear();
     removeCustomImageDragListeners();
@@ -430,26 +467,37 @@ function App() {
   useEffect(() => {
     const handleBeforeUnload = () => {
       try {
+        const writeUnloadStorage = (key, value) => {
+          try {
+            localStorage.setItem(key, value);
+          } catch (error) {
+            if (error?.name === 'QuotaExceededError' || error?.code === 22) {
+              sessionStorage.setItem(key, value);
+              return;
+            }
+            throw error;
+          }
+        };
         flushEditorContentSync();
         flushCustomersSave();
         const currentCustomers = stripTransientObjectUrlsFromCustomers(customersRef.current);
         const serialized = JSON.stringify(currentCustomers);
         if (serialized.length <= LOCAL_STORAGE_SAFE_CUSTOMER_SIZE) {
-          localStorage.setItem(STORAGE_KEY, serialized);
+          writeUnloadStorage(STORAGE_KEY, serialized);
         } else {
           const stripped = stripAttachmentDataForLocalStorage(currentCustomers);
           const serializedStripped = JSON.stringify(stripped);
           if (serializedStripped.length <= LOCAL_STORAGE_SAFE_CUSTOMER_SIZE) {
-            localStorage.setItem(STORAGE_KEY, serializedStripped);
+            writeUnloadStorage(STORAGE_KEY, serializedStripped);
           }
         }
-        localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify({
+        writeUnloadStorage(LAYOUT_STORAGE_KEY, JSON.stringify({
           leftCollapsed, rightCollapsed, leftPanelWidth, rightPanelWidth,
         }));
-        localStorage.setItem(VIEW_STATE_STORAGE_KEY, JSON.stringify({
+        writeUnloadStorage(VIEW_STATE_STORAGE_KEY, JSON.stringify({
           selectedId, selectedWorkflowId, selectedWorkflowIds, workflowViewMode, mainView, calendarMonth, selectedCalendarDate,
         }));
-        localStorage.setItem(GLOBAL_FIELD_LABELS_STORAGE_KEY, JSON.stringify(globalFieldLabels));
+        writeUnloadStorage(GLOBAL_FIELD_LABELS_STORAGE_KEY, JSON.stringify(globalFieldLabels));
       } catch (error) {
         console.warn('beforeunload save failed', error);
       }
@@ -473,6 +521,13 @@ function App() {
 
   useEffect(() => {
     saveLayout({ leftCollapsed, rightCollapsed, leftPanelWidth, rightPanelWidth });
+  }, [leftCollapsed, rightCollapsed, leftPanelWidth, rightPanelWidth]);
+
+  useEffect(() => {
+    leftCollapsedRef.current = leftCollapsed;
+    rightCollapsedRef.current = rightCollapsed;
+    leftPanelWidthRef.current = leftPanelWidth;
+    rightPanelWidthRef.current = rightPanelWidth;
   }, [leftCollapsed, rightCollapsed, leftPanelWidth, rightPanelWidth]);
 
   useEffect(() => {
@@ -520,8 +575,8 @@ function App() {
       const boardRect = boardRef.current?.getBoundingClientRect();
       if (!boardRect) return;
 
-      const fixedRightWidth = rightCollapsed ? COLLAPSED_PANEL_WIDTH : rightPanelWidth;
-      const fixedLeftWidth = leftCollapsed ? COLLAPSED_PANEL_WIDTH : leftPanelWidth;
+      const fixedRightWidth = rightCollapsedRef.current ? COLLAPSED_PANEL_WIDTH : rightPanelWidthRef.current;
+      const fixedLeftWidth = leftCollapsedRef.current ? COLLAPSED_PANEL_WIDTH : leftPanelWidthRef.current;
       const maxLeftWidth = Math.max(
         MIN_LEFT_PANEL_WIDTH,
         boardRect.width - (RESIZER_WIDTH * 2) - fixedRightWidth - MIN_CENTER_PANEL_WIDTH,
@@ -531,12 +586,12 @@ function App() {
         boardRect.width - (RESIZER_WIDTH * 2) - fixedLeftWidth - MIN_CENTER_PANEL_WIDTH,
       );
 
-      if (activeResizer === 'left' && !leftCollapsed) {
+      if (activeResizer === 'left' && !leftCollapsedRef.current) {
         const nextWidth = Math.min(Math.max(event.clientX - boardRect.left, MIN_LEFT_PANEL_WIDTH), maxLeftWidth);
         setLeftPanelWidth(Math.round(nextWidth));
       }
 
-      if (activeResizer === 'right' && !rightCollapsed) {
+      if (activeResizer === 'right' && !rightCollapsedRef.current) {
         const nextWidth = Math.min(Math.max(boardRect.right - event.clientX, MIN_RIGHT_PANEL_WIDTH), maxRightWidth);
         setRightPanelWidth(Math.round(nextWidth));
       }
@@ -559,7 +614,7 @@ function App() {
       document.body.style.removeProperty('cursor');
       document.body.style.removeProperty('user-select');
     };
-  }, [activeResizer, leftCollapsed, leftPanelWidth, rightCollapsed, rightPanelWidth]);
+  }, [activeResizer]);
 
   function getCustomersWithCurrentEditorContent(sourceCustomers = customersRef.current) {
     if (!editorRef.current || !selectedCustomer) return sourceCustomers;
@@ -619,6 +674,18 @@ function App() {
       }
       return contentMap;
     }, new Map());
+  }
+
+  function isMergedWorkflowEditorContentUnchanged() {
+    const contentByWorkflowId = readMergedWorkflowContentFromEditor();
+    if (contentByWorkflowId.size === 0 || contentByWorkflowId.size !== mergedWorkflows.length) return false;
+
+    return mergedWorkflows.every((item) => {
+      if (!contentByWorkflowId.has(item.id)) return false;
+      const editorBodyHtml = normalizeWorkflowDocumentContent(contentByWorkflowId.get(item.id));
+      const savedBodyHtml = normalizeWorkflowDocumentContent(item.documentContent ?? item.content ?? '');
+      return editorBodyHtml === savedBodyHtml;
+    });
   }
 
   function saveCurrentEditorContent() {
@@ -849,7 +916,17 @@ function App() {
     return nextIds.length > 0 ? nextIds : workflowIds;
   }
 
+  function guardNextEditorBlurFlush() {
+    isSwitchingEditorContextRef.current = true;
+    clearTimeout(editorContextSwitchTimerRef.current);
+    editorContextSwitchTimerRef.current = setTimeout(() => {
+      isSwitchingEditorContextRef.current = false;
+      editorContextSwitchTimerRef.current = null;
+    }, 0);
+  }
+
   function selectCustomer(id) {
+    guardNextEditorBlurFlush();
     const nextCustomers = saveCurrentEditorContent();
     rememberSelectedWorkflowForCustomer();
     rememberMergedWorkflowSelectionForCustomer();
@@ -866,6 +943,7 @@ function App() {
 
   function changeWorkflowViewMode(mode) {
     if (mode === workflowViewMode) return;
+    guardNextEditorBlurFlush();
     const focusedMergedWorkflowId = isMergedWorkflowView
       ? getWorkflowIdFromEditorRange(editorSelectionRef.current)
       : '';
@@ -891,12 +969,14 @@ function App() {
   }
 
   function selectSingleWorkflow(workflowId) {
+    guardNextEditorBlurFlush();
     saveCurrentEditorContent();
     rememberSelectedWorkflowForCustomer(selectedId, workflowId);
     setSelectedWorkflowId(workflowId);
   }
 
   function openCalendarActivity(activity) {
+    syncEditorContent();
     const nextCustomers = saveCurrentEditorContent();
     rememberSelectedWorkflowForCustomer();
     rememberMergedWorkflowSelectionForCustomer();
@@ -938,12 +1018,14 @@ function App() {
   }
 
   function focusWorkflow(workflowId) {
+    guardNextEditorBlurFlush();
     saveCurrentEditorContent();
     rememberSelectedWorkflowForCustomer(selectedId, workflowId);
     setSelectedWorkflowId(workflowId);
   }
 
   function toggleMergedWorkflow(workflowId) {
+    guardNextEditorBlurFlush();
     saveCurrentEditorContent();
     rememberSelectedWorkflowForCustomer(selectedId, workflowId);
     setSelectedWorkflowId(workflowId);
@@ -1031,6 +1113,7 @@ function App() {
 
   function handleEditorContextMenu(event) {
     event.preventDefault();
+    pendingMentionHtmlRef.current = '';
     saveEditorSelection();
     const targetObject = getClosestEditorObject(event.target);
     const selectedRange = getSavedEditorSelectionRange();
@@ -1040,8 +1123,8 @@ function App() {
     pendingMentionHtmlRef.current = getEditorSelectionHtml(getSavedEditorSelectionRange());
     const hasSelection = Boolean(pendingMentionHtmlRef.current);
     setContextMenu({
-      x: event.clientX,
-      y: event.clientY,
+      x: Math.max(0, Math.min(event.clientX, window.innerWidth - 280)),
+      y: Math.max(0, Math.min(event.clientY, window.innerHeight - 160)),
       hasSelection,
       hasAttachments: getSelectedEditorAttachments().length > 0,
     });
@@ -1058,6 +1141,7 @@ function App() {
 
     container.querySelectorAll('script, style, link, meta').forEach((element) => element.remove());
     container.querySelectorAll('.mergedWorkflowMeta, .workflowTimestamps').forEach((element) => element.remove());
+    container.querySelectorAll('.editorTimestampBlock').forEach((element) => element.remove());
     clearTransientEditorSelectionClasses(container);
 
     const unwrapElement = (element) => {
@@ -1227,7 +1311,20 @@ function App() {
     });
   }
 
+  function hasArchiveDraftChanges() {
+    if (!selectedCustomer || archiveDraft?.id !== selectedCustomer.id) return false;
+
+    const currentDraft = makeArchiveDraft(selectedCustomer, globalFieldLabels);
+    return archiveFields.some(([fieldKey]) => (
+      (archiveDraft[fieldKey] ?? '') !== (currentDraft[fieldKey] ?? '')
+      || (archiveDraft.fieldLabels?.[fieldKey] ?? '') !== (currentDraft.fieldLabels?.[fieldKey] ?? '')
+    ));
+  }
+
   function cancelArchiveEditing() {
+    if (hasArchiveDraftChanges() && !window.confirm('当前归档有未保存的修改，确定要取消吗？')) {
+      return;
+    }
     setArchiveEditing(false);
     setArchiveDraft(null);
   }
@@ -1254,6 +1351,9 @@ function App() {
     if (!selectedCustomer || archiveDraft?.id !== selectedCustomer.id) return;
 
     const nextGlobalFieldLabels = normalizeFieldLabels(archiveDraft.fieldLabels);
+    const { id, fieldLabels, ...patch } = archiveDraft;
+    patch.fieldLabels = normalizeFieldLabels(fieldLabels, nextGlobalFieldLabels);
+    updateCustomer(id, patch);
     commitGlobalFieldLabels(nextGlobalFieldLabels);
     setArchiveEditing(false);
     setArchiveDraft(null);
@@ -1691,13 +1791,21 @@ function App() {
     document.body.appendChild(link);
     link.click();
     link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
   }
 
   function toggleEditorExpanded() {
-    const nextExpanded = !editorExpanded;
-    setLeftCollapsed(nextExpanded);
-    setRightCollapsed(nextExpanded);
+    if (!editorExpanded) {
+      editorExpandedPanelStateRef.current = { leftCollapsed, rightCollapsed };
+      setLeftCollapsed(true);
+      setRightCollapsed(true);
+      return;
+    }
+
+    const previousPanelState = editorExpandedPanelStateRef.current ?? { leftCollapsed: false, rightCollapsed: false };
+    setLeftCollapsed(previousPanelState.leftCollapsed);
+    setRightCollapsed(previousPanelState.rightCollapsed);
+    editorExpandedPanelStateRef.current = null;
   }
 
   function startResize(side) {
@@ -1913,13 +2021,22 @@ function App() {
     if (!editorRef.current) return;
     const nextHtml = getEditorHtmlForSave();
     recordEditorHistorySnapshot(nextHtml);
-    const currentSavedContent = isMergedWorkflowView ? editorContent : selectedWorkflowContent;
+    if (isMergedWorkflowView) {
+      if (isMergedWorkflowEditorContentUnchanged()) {
+        editorDirtyRef.current = false;
+        return;
+      }
+      updateEditorContent(nextHtml);
+      editorDirtyRef.current = false;
+      return;
+    }
+
     // Normalize the editor HTML to body content for fair comparison with saved content.
     // getEditorHtmlForSave() now returns the full editor innerHTML (including the
     // section wrapper), while currentSavedContent is just the body content. Without
     // normalization the two would never match, causing unnecessary saves.
     const normalizedEditorHtml = normalizeWorkflowDocumentContent(nextHtml);
-    if (normalizedEditorHtml === currentSavedContent) {
+    if (normalizedEditorHtml === selectedWorkflowContent) {
       editorDirtyRef.current = false;
       return;
     }
@@ -1937,6 +2054,7 @@ function App() {
       clearTimeout(editorSyncTimerRef.current);
       editorSyncTimerRef.current = null;
     }
+    if (isSwitchingEditorContextRef.current) return;
     syncEditorContent();
   }
 
@@ -2305,6 +2423,27 @@ function App() {
     container.innerHTML = html;
     container.querySelectorAll('script, style, link, meta').forEach((element) => element.remove());
     container.querySelectorAll('.editorImageResizeHandle').forEach((element) => element.remove());
+    container.querySelectorAll('.mergedWorkflowMeta').forEach((element) => element.remove());
+    function unwrapEditorClipboardElement(element) {
+      const fragment = document.createDocumentFragment();
+      while (element.firstChild) {
+        fragment.appendChild(element.firstChild);
+      }
+      element.replaceWith(fragment);
+    }
+    Array.from(container.querySelectorAll('.mergedWorkflowSection, .singleWorkflowSection')).forEach((section) => {
+      const body = section.querySelector(':scope > .mergedWorkflowBody') || section.querySelector('.mergedWorkflowBody');
+      if (body) {
+        const fragment = document.createDocumentFragment();
+        while (body.firstChild) {
+          fragment.appendChild(body.firstChild);
+        }
+        section.replaceWith(fragment);
+      } else {
+        unwrapEditorClipboardElement(section);
+      }
+    });
+    Array.from(container.querySelectorAll('.mergedWorkflowBody')).forEach(unwrapEditorClipboardElement);
     clearTransientEditorSelectionClasses(container);
     container.querySelectorAll('.editorImageFrame').forEach((frame) => {
       frame.style.display = 'block';
@@ -2354,6 +2493,7 @@ function App() {
     }
     if (!lastInsertedNode) return false;
 
+    commitPendingEditorHistory();
     range.deleteContents();
     range.insertNode(fragment);
     prepareEditorImages();
@@ -2408,25 +2548,35 @@ function App() {
     const fragment = document.createDocumentFragment();
     let lastInsertedNode = null;
 
-    lines.forEach((line) => {
-      const block = document.createElement('div');
-      if (line) {
-        block.textContent = line;
-      } else {
-        block.appendChild(document.createElement('br'));
-      }
-      lastInsertedNode = block;
-      fragment.appendChild(block);
-    });
+    if (lines.length === 1) {
+      lastInsertedNode = document.createTextNode(lines[0]);
+      fragment.appendChild(lastInsertedNode);
+    } else {
+      lines.forEach((line) => {
+        const block = document.createElement('div');
+        if (line) {
+          block.textContent = line;
+        } else {
+          block.appendChild(document.createElement('br'));
+        }
+        lastInsertedNode = block;
+        fragment.appendChild(block);
+      });
+    }
 
     if (!lastInsertedNode) return false;
 
+    commitPendingEditorHistory();
     range.deleteContents();
     range.insertNode(fragment);
 
     const selection = window.getSelection();
     const nextRange = document.createRange();
-    nextRange.setStartAfter(lastInsertedNode);
+    if (lastInsertedNode.nodeType === Node.TEXT_NODE) {
+      nextRange.setStart(lastInsertedNode, lastInsertedNode.textContent.length);
+    } else {
+      nextRange.setStartAfter(lastInsertedNode);
+    }
     nextRange.collapse(true);
     selection?.removeAllRanges();
     selection?.addRange(nextRange);
@@ -2519,7 +2669,16 @@ function App() {
 
     editorRef.current.focus();
     const range = document.createRange();
-    range.selectNodeContents(editorRef.current);
+    const fallbackScope = isMergedWorkflowView
+      ? (
+          activeWorkflowForActions?.id
+            ? Array.from(editorRef.current.querySelectorAll('.mergedWorkflowSection'))
+                .find((section) => section.getAttribute('data-workflow-id') === activeWorkflowForActions.id)
+                ?.querySelector('.mergedWorkflowBody')
+            : null
+        ) || editorRef.current.querySelector('.mergedWorkflowBody')
+      : editorRef.current;
+    range.selectNodeContents(fallbackScope);
     range.collapse(false);
     selection?.removeAllRanges();
     selection?.addRange(range);
@@ -2593,6 +2752,7 @@ function App() {
       return;
     }
     restoreEditorSelection();
+    commitPendingEditorHistory();
     document.execCommand(command, false, value);
     syncEditorContent();
     saveEditorSelection();
@@ -2600,6 +2760,7 @@ function App() {
 
   function clearEditorFormatting() {
     if (!restoreEditorSelection()) return;
+    commitPendingEditorHistory();
     document.execCommand('removeFormat', false, null);
     document.execCommand('unlink', false, null);
 
@@ -3010,6 +3171,16 @@ function App() {
           url,
         });
         (existingFrame || video).replaceWith(frame);
+        if (isStoredAssetUrl(url)) {
+          resolveStoredAssetDataUrl(url)
+            .then((dataUrl) => {
+              if (!editorRef.current?.contains(frame)) return;
+              frame.dataset.attachmentUrl = dataUrl;
+            })
+            .catch((error) => {
+              console.warn('Failed to load stored video asset', error);
+            });
+        }
         return;
       }
 
@@ -3017,28 +3188,6 @@ function App() {
       video.preload = 'metadata';
       video.draggable = false;
       video.setAttribute('draggable', 'false');
-      const storedSrc = video.dataset.editorSrc || video.getAttribute('src') || '';
-      if (isStoredAssetUrl(storedSrc)) {
-        video.dataset.editorSrc = storedSrc;
-        if (!video.dataset.objectUrl || video.getAttribute('src') === storedSrc) {
-          resolveStoredAssetDataUrl(storedSrc)
-            .then((dataUrl) => {
-              if (!editorRef.current?.contains(video)) return;
-              if (video.dataset.objectUrl) {
-                URL.revokeObjectURL(video.dataset.objectUrl);
-                editorObjectUrlsRef.current.delete(video.dataset.objectUrl);
-              }
-              const objectUrl = dataUrlToBlobUrl(dataUrl, video.dataset.editorType || 'video/mp4');
-              editorObjectUrlsRef.current.add(objectUrl);
-              video.dataset.objectUrl = objectUrl;
-              video.src = objectUrl;
-            })
-            .catch((error) => {
-              console.warn('Failed to load stored video asset', error);
-              video.removeAttribute('src');
-            });
-        }
-      }
       if (existingFrame) {
         existingFrame.contentEditable = 'false';
         existingFrame.draggable = false;
@@ -3332,6 +3481,7 @@ function App() {
       && styleKeys.every((key) => key === 'color' || key === 'backgroundColor');
 
     if (canUseNativeInlineCommand) {
+      commitPendingEditorHistory();
       document.execCommand('styleWithCSS', false, true);
       if (normalizedStyle.color) {
         document.execCommand('foreColor', false, normalizedStyle.color);
@@ -3348,6 +3498,7 @@ function App() {
       return;
     }
     if (range.collapsed) return;
+    commitPendingEditorHistory();
     const styledSpan = document.createElement('span');
     Object.assign(styledSpan.style, normalizedStyle);
     styledSpan.appendChild(range.extractContents());
@@ -3388,6 +3539,7 @@ function App() {
     if (!selection?.rangeCount) return;
     const range = selection.getRangeAt(0);
     if (range.collapsed) return;
+    commitPendingEditorHistory();
 
     // Extract selected content and strip all existing inline formatting
     const fragment = range.extractContents();
@@ -3586,6 +3738,7 @@ function App() {
     const fragment = document.createDocumentFragment();
     fragment.appendChild(timestampBlock);
 
+    commitPendingEditorHistory();
     if (insertionTarget?.parentNode) {
       insertionTarget.parentNode.insertBefore(fragment, insertionTarget);
       const nextRange = document.createRange();
@@ -3599,9 +3752,9 @@ function App() {
       nextLine.className = 'editorTimestampCursorLine';
       const cursorText = document.createTextNode('\u200b');
       nextLine.appendChild(cursorText);
-      timestampBlock.after(nextLine);
       range.deleteContents();
       range.insertNode(fragment);
+      timestampBlock.after(nextLine);
 
       const nextRange = document.createRange();
       nextRange.setStart(cursorText, cursorText.length);
@@ -3670,15 +3823,18 @@ function App() {
     cursorLine.appendChild(document.createTextNode('\u200b'));
     fragment.appendChild(cursorLine);
 
+    commitPendingEditorHistory();
     range.deleteContents();
     range.insertNode(fragment);
     clearAttachmentBackground(frame);
-    range.setStart(cursorLine, cursorLine.childNodes.length);
-    range.collapse(true);
+    if (!cursorLine.isConnected) return;
+    const nextRange = document.createRange();
+    nextRange.setStart(cursorLine, cursorLine.childNodes.length);
+    nextRange.collapse(true);
     selection?.removeAllRanges();
-    selection?.addRange(range);
+    selection?.addRange(nextRange);
     clearActiveEditorObjects();
-    editorSelectionRef.current = range.cloneRange();
+    editorSelectionRef.current = nextRange.cloneRange();
     if (sync) syncEditorContent();
     saveEditorSelection();
   }
@@ -3945,6 +4101,13 @@ function App() {
     image.alt = '上传图片';
     image.addEventListener('error', function onImageError() {
       if (this.dataset.editorSrc && isStoredAssetUrl(this.dataset.editorSrc)) {
+        const retryCount = Number(this.dataset.retryCount || 0);
+        if (retryCount >= 1) {
+          this.alt = '图片资源加载失败';
+          this.removeAttribute('data-loading-asset');
+          return;
+        }
+        this.dataset.retryCount = String(retryCount + 1);
         resolveStoredAssetDataUrlWithRetry(this.dataset.editorSrc)
           .then((dataUrl) => {
             if (!editorRef.current?.contains(this)) return;
@@ -3954,7 +4117,9 @@ function App() {
             this.src = objectUrl;
           })
           .catch(() => {
-            this.alt = this.alt || '上传图片';
+            this.dataset.retryCount = '1';
+            this.alt = '图片资源加载失败';
+            this.removeAttribute('data-loading-asset');
           });
       }
     });
@@ -3973,14 +4138,17 @@ function App() {
     cursorLine.appendChild(document.createTextNode('\u200b'));
     fragment.appendChild(cursorLine);
 
+    commitPendingEditorHistory();
     range.deleteContents();
     range.insertNode(fragment);
-    range.setStart(cursorLine, cursorLine.childNodes.length);
-    range.collapse(true);
+    if (!cursorLine.isConnected) return;
+    const nextRange = document.createRange();
+    nextRange.setStart(cursorLine, cursorLine.childNodes.length);
+    nextRange.collapse(true);
     selection?.removeAllRanges();
-    selection?.addRange(range);
+    selection?.addRange(nextRange);
     clearActiveEditorObjects();
-    editorSelectionRef.current = range.cloneRange();
+    editorSelectionRef.current = nextRange.cloneRange();
     if (sync) syncEditorContent();
     saveEditorSelection();
   }
@@ -4204,6 +4372,10 @@ function App() {
 
     imageDragStateRef.current = null;
     removeImageDropMarker();
+    if (pendingEditorHydrationAfterImageDragRef.current) {
+      pendingEditorHydrationAfterImageDragRef.current = false;
+      setEditorHydrationVersion((version) => version + 1);
+    }
     event?.preventDefault?.();
   }
 
@@ -5213,32 +5385,34 @@ function App() {
                     onChange={handleEditorAttachmentSelected}
                   />
                 </div>
-                <div
-                  key={editorKey}
-                  ref={editorRef}
-                  className={`messyContent ${isMergedWorkflowView ? 'mergedViewContent' : ''}`}
-                  contentEditable={!isMergedWorkflowView && canEditEditor}
-                  suppressContentEditableWarning
-                  onBlur={flushEditorContentSync}
-                  onPaste={handleEditorPaste}
-                  onDragOver={handleEditorDragOver}
-                  onDrop={handleEditorDrop}
-                  onMouseDown={handleEditorMouseDown}
-                  onMouseUp={saveEditorSelection}
-                  onMouseMove={handleEditorMouseMove}
-                  onKeyDown={handleEditorKeyDown}
-                  onKeyUp={saveEditorSelection}
-                  onFocus={saveEditorSelection}
-                  onContextMenu={handleEditorContextMenu}
-                  onClick={handleEditorClick}
-                  onDoubleClick={handleEditorDoubleClick}
-                  data-placeholder={isMergedWorkflowView
-                    ? '请选择至少一个工作流进行合并查看。'
-                    : selectedWorkflow
-                      ? '编辑当前工作流对应的文档内容。'
-                      : '请先添加或选择一个工作流。'}
-                />
-                <div className="wordCount">字数 · {editorWordCount}</div>
+                <div className={`messyContent ${isMergedWorkflowView ? 'mergedViewContent' : ''}`}>
+                  <div
+                    key={editorKey}
+                    ref={editorRef}
+                    className="messyEditable"
+                    contentEditable={!isMergedWorkflowView && canEditEditor}
+                    suppressContentEditableWarning
+                    onBlur={flushEditorContentSync}
+                    onPaste={handleEditorPaste}
+                    onDragOver={handleEditorDragOver}
+                    onDrop={handleEditorDrop}
+                    onMouseDown={handleEditorMouseDown}
+                    onMouseUp={saveEditorSelection}
+                    onMouseMove={handleEditorMouseMove}
+                    onKeyDown={handleEditorKeyDown}
+                    onKeyUp={saveEditorSelection}
+                    onFocus={saveEditorSelection}
+                    onContextMenu={handleEditorContextMenu}
+                    onClick={handleEditorClick}
+                    onDoubleClick={handleEditorDoubleClick}
+                    data-placeholder={isMergedWorkflowView
+                      ? '请选择至少一个工作流进行合并查看。'
+                      : selectedWorkflow
+                        ? '编辑当前工作流对应的文档内容。'
+                        : '请先添加或选择一个工作流。'}
+                  />
+                  <div className="wordCount">字数 · {editorWordCount}</div>
+                </div>
               </div>
 
               <div className="composer">
@@ -5476,7 +5650,10 @@ function App() {
                                 event.currentTarget.select();
                               });
                             }}
-                            onBlur={() => setEditingWorkflowTitleId('')}
+                            onBlur={(event) => {
+                              updateWorkflow(item.id, { title: event.target.value });
+                              setEditingWorkflowTitleId('');
+                            }}
                             onKeyDown={(event) => {
                               event.stopPropagation();
                               if (event.key === 'Enter') {
@@ -5488,7 +5665,7 @@ function App() {
                               }
                             }}
                             onChange={(event) => {
-                              if (!editingTitle) return;
+                              if (editingWorkflowTitleId !== item.id) return;
                               updateWorkflow(item.id, { title: event.target.value });
                             }}
                           />
