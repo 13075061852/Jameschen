@@ -2371,6 +2371,75 @@ function App() {
     return true;
   }
 
+  function getSafeExternalTextInsertionRange() {
+    const range = ensureEditorInsertionRange();
+    const editor = editorRef.current;
+    if (!range || !editor) return null;
+
+    const selectedTimestamp = Array.from(editor.querySelectorAll('.editorTimestampBlock'))
+      .find((timestamp) => {
+        if (range.intersectsNode?.(timestamp)) return true;
+        return range.commonAncestorContainer === timestamp || timestamp.contains(range.commonAncestorContainer);
+      });
+    if (selectedTimestamp) {
+      const nextRange = document.createRange();
+      nextRange.setStartAfter(selectedTimestamp);
+      nextRange.collapse(true);
+      return nextRange;
+    }
+
+    return range;
+  }
+
+  function getPlainTextFromClipboardHtml(html = '') {
+    if (!html) return '';
+    const container = document.createElement('div');
+    container.innerHTML = html;
+    container.querySelectorAll('script, style, link, meta').forEach((element) => element.remove());
+    return container.innerText || container.textContent || '';
+  }
+
+  function insertExternalPlainTextAtSelection(text = '') {
+    if (!editorRef.current || !text) return false;
+    const range = getSafeExternalTextInsertionRange();
+    if (!range) return false;
+
+    const lines = text.replace(/\r\n?/g, '\n').split('\n');
+    const fragment = document.createDocumentFragment();
+    let lastInsertedNode = null;
+
+    lines.forEach((line) => {
+      const block = document.createElement('div');
+      if (line) {
+        block.textContent = line;
+      } else {
+        block.appendChild(document.createElement('br'));
+      }
+      lastInsertedNode = block;
+      fragment.appendChild(block);
+    });
+
+    if (!lastInsertedNode) return false;
+
+    range.deleteContents();
+    range.insertNode(fragment);
+
+    const selection = window.getSelection();
+    const nextRange = document.createRange();
+    nextRange.setStartAfter(lastInsertedNode);
+    nextRange.collapse(true);
+    selection?.removeAllRanges();
+    selection?.addRange(nextRange);
+    editorSelectionRef.current = nextRange.cloneRange();
+
+    normalizeEditorMediaFramePlacement();
+    normalizeEditorTimestampProtection();
+    syncEditorContent();
+    setTimeout(() => linkifyAllEditorContent(), 0);
+    saveEditorSelection();
+    return true;
+  }
+
   async function copyEditorSelection({ silent = false } = {}) {
     const range = getSavedEditorSelectionRange();
     if (!range) {
@@ -4501,32 +4570,9 @@ function App() {
       return;
     }
 
-    // Fallback: paste as text
-    const clipboardText = event.clipboardData?.getData('text/plain');
-    if (!clipboardText || !editorRef.current) return;
-
-    const range = ensureEditorInsertionRange();
-    if (!range) return;
-
-    // Delete any currently selected content
-    range.deleteContents();
-
-    // Insert pasted text
-    const textNode = document.createTextNode(clipboardText);
-    range.insertNode(textNode);
-
-    // Move cursor AFTER the inserted text
-    const newRange = document.createRange();
-    newRange.setStartAfter(textNode);
-    newRange.collapse(true);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(newRange);
-    editorSelectionRef.current = newRange.cloneRange();
-
-    syncEditorContent();
-    // Auto-linkify URLs in the pasted content
-    setTimeout(() => linkifyAllEditorContent(), 0);
+    const clipboardText = event.clipboardData?.getData('text/plain')
+      || getPlainTextFromClipboardHtml(clipboardHtml);
+    insertExternalPlainTextAtSelection(clipboardText);
   }
 
   function handleEditorDragOver(event) {

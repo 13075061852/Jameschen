@@ -544,6 +544,19 @@
   box-decoration-break: clone;
 }
 
+.messyContent div:not(.editorImageFrame):not(.editorVideoFrame):not(.editorAttachmentFrame):not(.editorImageDropMarker),
+.messyContent p,
+.messyContent span:not(.editorImageResizeHandle):not(.editorAttachmentIcon):not(.editorAttachmentText) {
+  position: static !important;
+  top: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  left: auto !important;
+  float: none !important;
+  transform: none !important;
+  line-height: inherit !important;
+}
+
 .messyContent .editorItalic,
 .messyContent i,
 .messyContent em {
