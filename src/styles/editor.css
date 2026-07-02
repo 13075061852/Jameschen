@@ -552,7 +552,7 @@
 
 .messyContent div:not(.editorImageFrame):not(.editorVideoFrame):not(.editorAttachmentFrame):not(.editorImageDropMarker),
 .messyContent p,
-.messyContent span:not(.editorImageResizeHandle):not(.editorAttachmentIcon):not(.editorAttachmentText) {
+.messyContent span:not(.editorImageFrame):not(.editorVideoFrame):not(.editorAttachmentFrame):not(.editorImageDropMarker):not(.editorImageResizeHandle):not(.editorAttachmentIcon):not(.editorAttachmentText) {
   position: static !important;
   top: auto !important;
   right: auto !important;
@@ -697,6 +697,27 @@
   transition: none;
 }
 
+.editorImageFrame.dragging {
+  line-height: 0;
+  cursor: grabbing;
+  opacity: 0.78;
+  transition: none;
+}
+
+.editorImageFrame.dragging img {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  display: block;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.editorImageFrame.dragging .editorImageResizeHandle {
+  display: none;
+}
+
 .editorImageDropMarker {
   width: 320px;
   max-width: 100%;
@@ -711,10 +732,11 @@
 
 .messyContent .editorImageResizeHandle {
   position: absolute;
-  right: -7px;
-  bottom: -7px;
-  width: 14px;
-  height: 14px;
+  right: 8px;
+  bottom: 8px;
+  z-index: 2;
+  width: 18px;
+  height: 18px;
   border: 2px solid #ffffff;
   border-radius: 50%;
   background: #111111;
@@ -722,8 +744,10 @@
   cursor: nwse-resize;
   opacity: 0;
   pointer-events: none;
+  transition: opacity 120ms ease;
 }
 
+.messyContent .editorImageFrame:hover .editorImageResizeHandle,
 .messyContent .editorImageFrame.active .editorImageResizeHandle {
   opacity: 1;
   pointer-events: auto;

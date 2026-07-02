@@ -25,9 +25,24 @@ import { saveCustomersToIndexedDb, readCustomersFromIndexedDb, deleteUnusedAsset
 import { collectAssetIdsFromCustomers } from '../utils/backup.js';
 import { normalizeFieldLabels } from '../utils/archive.js';
 
+function readStorageValue(key) {
+  try {
+    const stored = localStorage.getItem(key);
+    if (stored !== null) return stored;
+  } catch {
+    // Fall through to the reload-only safety copy written during unload.
+  }
+
+  try {
+    return sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
 export function readInitialCustomers() {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
+    const stored = readStorageValue(STORAGE_KEY);
     const initialCustomers = stored ? JSON.parse(stored) : seedCustomers;
     return initialCustomers.map((customer, index) => ({
       ...customer,
@@ -99,7 +114,7 @@ export function cleanupUnusedAssets(customers) {
 
 export function readInitialLayout() {
   try {
-    const stored = localStorage.getItem(LAYOUT_STORAGE_KEY);
+    const stored = readStorageValue(LAYOUT_STORAGE_KEY);
     if (!stored) {
       return {
         leftCollapsed: false,
@@ -131,7 +146,7 @@ export function saveLayout(layout) {
 
 export function readInitialViewState() {
   try {
-    const stored = localStorage.getItem(VIEW_STATE_STORAGE_KEY);
+    const stored = readStorageValue(VIEW_STATE_STORAGE_KEY);
     if (!stored) {
       return {
         selectedId: '',
@@ -179,7 +194,7 @@ export function saveViewState(viewState) {
 
 export function readInitialGlobalFieldLabels() {
   try {
-    const stored = localStorage.getItem(GLOBAL_FIELD_LABELS_STORAGE_KEY);
+    const stored = readStorageValue(GLOBAL_FIELD_LABELS_STORAGE_KEY);
     if (!stored) return {};
     return normalizeFieldLabels(JSON.parse(stored));
   } catch {

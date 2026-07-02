@@ -87,19 +87,9 @@
   font-weight: 760;
 }
 
-.topIconButton,
 .collapseButton {
   display: grid;
   place-items: center;
-}
-
-.topIconButton {
-  width: 28px;
-  height: 28px;
-  border: 0;
-  border-radius: 8px;
-  color: #333333;
-  background: transparent;
 }
 
 .topTextButton {
@@ -116,7 +106,6 @@
   font-weight: 760;
 }
 
-.topIconButton:hover,
 .topTextButton:hover,
 .collapseButton:hover {
   color: var(--blue);

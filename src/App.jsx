@@ -44,7 +44,6 @@ import {
   Redo2,
   Search,
   Send,
-  Settings,
   Star,
   Trash2,
   Type,
@@ -721,7 +720,7 @@ function App() {
   const MAX_EXPORT_SIZE_WARNING = 100 * 1024 * 1024; // 100MB
 
   async function exportBackupData() {
-    const backupCustomers = getCustomersWithCurrentEditorContent();
+    const backupCustomers = saveCurrentEditorContent();
     const layout = { leftCollapsed, rightCollapsed, leftPanelWidth, rightPanelWidth };
     const viewState = { selectedId, selectedWorkflowId, selectedWorkflowIds, workflowViewMode, mainView, calendarMonth, selectedCalendarDate };
     const assetIds = collectAssetIdsFromCustomers(backupCustomers);
@@ -768,7 +767,7 @@ function App() {
       const newCustomers = importedCustomers.filter((customer) => !isDuplicateCustomer(customer, duplicateKeys));
       const nextCustomers = [...baseCustomers, ...newCustomers];
 
-      commitCustomers(nextCustomers);
+      commitCustomers(nextCustomers, true);
       commitGlobalFieldLabels({ ...importedFieldLabels, ...globalFieldLabels });
       setSelectedId(selectedId || nextCustomers[0]?.id || '');
       setArchiveEditing(false);
@@ -815,7 +814,7 @@ function App() {
       ? importedViewState.selectedId
       : importedCustomers[0]?.id ?? '';
 
-    commitCustomers(importedCustomers);
+    commitCustomers(importedCustomers, true);
     commitGlobalFieldLabels(importedFieldLabels);
     setLeftCollapsed(importedLayout.leftCollapsed);
     setRightCollapsed(importedLayout.rightCollapsed);
@@ -1615,12 +1614,19 @@ function App() {
     ].join('');
   }
 
-  function getExportWorkflows() {
-    const customerTimeline = selectedCustomer?.timeline ?? [];
+  function getExportCustomer(sourceCustomers = customersRef.current) {
+    const exportCustomerId = selectedCustomer?.id || selectedId;
+    return sourceCustomers.find((customer) => customer.id === exportCustomerId) ?? selectedCustomer;
+  }
+
+  function getExportWorkflows(sourceCustomers = customersRef.current) {
+    const exportCustomer = getExportCustomer(sourceCustomers);
+    const customerTimeline = exportCustomer?.timeline ?? [];
     if (isMergedWorkflowView) {
       return customerTimeline.filter((item) => selectedWorkflowIds.includes(item.id));
     }
-    if (selectedWorkflow) return [selectedWorkflow];
+    const exportWorkflow = customerTimeline.find((item) => item.id === selectedWorkflowId);
+    if (exportWorkflow) return [exportWorkflow];
     return [];
   }
 
@@ -1635,11 +1641,13 @@ function App() {
   }
 
   async function handleExportPDF() {
-    const workflows = getExportWorkflows();
+    const currentCustomers = saveCurrentEditorContent();
+    const workflows = getExportWorkflows(currentCustomers);
     if (workflows.length === 0) return;
     setExportDialogOpen(false);
 
-    const html = await buildExportHtml(workflows, selectedCustomerTitle);
+    const exportCustomer = getExportCustomer(currentCustomers);
+    const html = await buildExportHtml(workflows, exportCustomer?.company || selectedCustomerTitle);
 
     // Render full HTML in a hidden iframe so <style> is applied properly
     const iframe = document.createElement('iframe');
@@ -1724,7 +1732,7 @@ function App() {
 
       const stamp = new Date().toISOString().slice(0, 10);
       const modeLabel = isMergedWorkflowView ? '合并' : '单独';
-      pdf.save(`${selectedCustomer?.company || '客户'}_工作流${modeLabel}_${stamp}.pdf`);
+      pdf.save(`${exportCustomer?.company || '客户'}_工作流${modeLabel}_${stamp}.pdf`);
     } catch (error) {
       console.error('PDF export failed', error);
     } finally {
@@ -1734,10 +1742,12 @@ function App() {
 
   async function handleExportWord() {
     setExportDialogOpen(false);
-    const workflows = getExportWorkflows();
+    const currentCustomers = saveCurrentEditorContent();
+    const workflows = getExportWorkflows(currentCustomers);
     if (workflows.length === 0) return;
 
-    const title = selectedCustomerTitle || '未命名客户';
+    const exportCustomer = getExportCustomer(currentCustomers);
+    const title = exportCustomer?.company || selectedCustomerTitle || '未命名客户';
     const date = new Date().toLocaleString('zh-CN', { hour12: false });
 
     const sections = (await Promise.all(workflows.map(async (item) => {
@@ -1787,7 +1797,7 @@ function App() {
     const stamp = new Date().toISOString().slice(0, 10);
     link.href = url;
     const modeLabelWord = isMergedWorkflowView ? '合并' : '单独';
-    link.download = `${selectedCustomer?.company || '客户'}_工作流${modeLabelWord}_${stamp}.doc`;
+    link.download = `${exportCustomer?.company || '客户'}_工作流${modeLabelWord}_${stamp}.doc`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -2922,7 +2932,6 @@ function App() {
       editorSelectionRef.current = nextRange.cloneRange();
     }
     syncEditorContent();
-    cleanupUnusedAssets(customersRef.current);
     editorRef.current.focus();
     return true;
   }
@@ -2976,6 +2985,19 @@ function App() {
       clickedFrame,
       event.clientX < rect.left ? 'before' : 'after',
     );
+  }
+
+  function placeEditorCaretFromMediaEdgeClick(event, frame) {
+    if (!frame || !editorRef.current?.contains(frame)) return false;
+    const rect = frame.getBoundingClientRect();
+    const edgeWidth = Math.max(18, Math.min(42, rect.width * 0.18));
+    if (event.clientX <= rect.left + edgeWidth) {
+      return placeEditorCaretAroundMediaFrame(frame, 'before');
+    }
+    if (event.clientX >= rect.right - edgeWidth) {
+      return placeEditorCaretAroundMediaFrame(frame, 'after');
+    }
+    return false;
   }
 
   function getEdgeEditorObject(node, direction) {
@@ -3072,18 +3094,12 @@ function App() {
     range.selectNode(frame);
     editorSelectionRef.current = range.cloneRange();
 
-    if (frame.classList.contains('editorAttachmentFrame')) {
-      const caretRange = document.createRange();
-      caretRange.setStartAfter(frame);
-      caretRange.collapse(true);
-      selection?.removeAllRanges();
-      selection?.addRange(caretRange);
-      skipNextEditorSelectionSaveRef.current = true;
-      return true;
-    }
-
+    const caretRange = document.createRange();
+    caretRange.setStartAfter(frame);
+    caretRange.collapse(true);
     selection?.removeAllRanges();
-    selection?.addRange(range);
+    selection?.addRange(caretRange);
+    skipNextEditorSelectionSaveRef.current = true;
     return true;
   }
 
@@ -4054,6 +4070,12 @@ function App() {
     frame.style.width = `${Math.round(nextWidth)}px`;
   }
 
+  function resizeEditorImageByWheel(frame, deltaY) {
+    const currentWidth = frame.getBoundingClientRect().width || Number.parseFloat(frame.style.width) || 320;
+    const wheelSteps = Math.max(-4, Math.min(4, deltaY / 100));
+    setEditorImageWidth(frame, currentWidth - wheelSteps * 32);
+  }
+
   function alignEditorImage(alignment) {
     const frame = getActiveEditorImageFrame();
     if (!frame) return;
@@ -4277,6 +4299,33 @@ function App() {
     return marker;
   }
 
+  function positionDraggingEditorObject(dragState, event) {
+    const { frame, pointerOffsetX, pointerOffsetY } = dragState;
+    frame.style.left = `${Math.round(event.clientX - pointerOffsetX)}px`;
+    frame.style.top = `${Math.round(event.clientY - pointerOffsetY)}px`;
+  }
+
+  function beginDraggingEditorObjectPreview(dragState, event) {
+    const { frame } = dragState;
+    const rect = frame.getBoundingClientRect();
+    dragState.originalStyleText = frame.getAttribute('style') || '';
+    frame.style.position = 'fixed';
+    frame.style.width = `${Math.round(rect.width)}px`;
+    frame.style.maxWidth = 'none';
+    frame.style.zIndex = '10000';
+    frame.style.pointerEvents = 'none';
+    frame.style.willChange = 'left, top';
+    frame.classList.add('dragging');
+    positionDraggingEditorObject(dragState, event);
+    document.body.appendChild(frame);
+  }
+
+  function clearDraggingEditorObjectPreview(dragState) {
+    const { frame } = dragState;
+    frame.classList.remove('dragging');
+    frame.setAttribute('style', dragState.originalStyleText || '');
+  }
+
   function placeImageDropMarker(frame, clientX, clientY) {
     const editor = editorRef.current;
     if (!editor) return false;
@@ -4355,7 +4404,11 @@ function App() {
     const { frame, hasMoved } = dragState;
     const lastEvent = imageDragLastEventRef.current;
     removeCustomImageDragListeners();
-    frame.classList.remove('dragging');
+    if (dragState.placeholderInserted) {
+      clearDraggingEditorObjectPreview(dragState);
+    } else {
+      frame.classList.remove('dragging');
+    }
 
     if (hasMoved && lastEvent) {
       placeImageDropMarker(frame, lastEvent.clientX, lastEvent.clientY);
@@ -4399,12 +4452,13 @@ function App() {
       }
 
       dragState.hasMoved = true;
-      dragState.frame.classList.add('dragging');
       if (!dragState.placeholderInserted) {
         const marker = ensureImageDropMarker(dragState.frame);
         dragState.frame.parentNode?.replaceChild(marker, dragState.frame);
         dragState.placeholderInserted = true;
+        beginDraggingEditorObjectPreview(dragState, latestEvent);
       }
+      positionDraggingEditorObject(dragState, latestEvent);
       placeImageDropMarker(dragState.frame, latestEvent.clientX, latestEvent.clientY);
     });
   }
@@ -4469,7 +4523,6 @@ function App() {
 
       const startX = event.clientX;
       const startWidth = frame.getBoundingClientRect().width;
-      const maxWidth = getMaxEditorImageWidth();
       let resizeRafId = null;
       let lastResizeEvent = null;
       frame.style.willChange = 'width';
@@ -4482,7 +4535,7 @@ function App() {
           resizeRafId = null;
           if (lastResizeEvent) {
             const nextWidth = startWidth + lastResizeEvent.clientX - startX;
-            frame.style.width = `${Math.round(Math.max(EDITOR_IMAGE_MIN_WIDTH, Math.min(maxWidth, nextWidth)))}px`;
+            setEditorImageWidth(frame, nextWidth);
           }
         });
       }
@@ -4503,9 +4556,25 @@ function App() {
     const frame = event.target.closest?.(EDITOR_DRAGGABLE_OBJECT_SELECTOR);
     if (!frame || !editorRef.current?.contains(frame)) return;
 
+    if (placeEditorCaretFromMediaEdgeClick(event, frame)) {
+      event.preventDefault();
+      return;
+    }
+
     event.preventDefault();
     selectEditorObject(frame);
     beginCustomImageDrag(frame, event);
+  }
+
+  function handleEditorWheel(event) {
+    if (!event.ctrlKey) return;
+    const frame = event.target.closest?.('.editorImageFrame');
+    if (!frame || !editorRef.current?.contains(frame)) return;
+
+    event.preventDefault();
+    selectEditorObject(frame);
+    resizeEditorImageByWheel(frame, event.deltaY);
+    syncEditorContentAndFlushSave();
   }
 
   const URL_LINKIFY_REGEX = /https?:\/\/[^\s<>"'`，。；：！？、（）：""''【】《》…]+$/i;
@@ -5083,9 +5152,6 @@ function App() {
             hidden
             onChange={importBackupData}
           />
-          <button type="button" className="topIconButton" title="设置">
-            <Settings size={19} />
-          </button>
         </div>
       </header>
 
@@ -5399,6 +5465,7 @@ function App() {
                     onMouseDown={handleEditorMouseDown}
                     onMouseUp={saveEditorSelection}
                     onMouseMove={handleEditorMouseMove}
+                    onWheel={handleEditorWheel}
                     onKeyDown={handleEditorKeyDown}
                     onKeyUp={saveEditorSelection}
                     onFocus={saveEditorSelection}
